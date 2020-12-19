@@ -1,5 +1,2 @@
 .DS_Store
-<<<<<<< HEAD
-doc
-=======
->>>>>>> 20e5dbd6c29a09d78fa06c779edbe4866bdca277
+*pycache*
