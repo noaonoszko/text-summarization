@@ -15,6 +15,8 @@ class Glove:
                 tokens = line.split(" ")
                 vec = np.array(tokens[1:], dtype=np.float32)
                 wordvecs[tokens[0]] = vec
+                if counter == 1000:
+                    break
                 if counter % 100000 == 0:
                     print("load_glove: parsing line ", counter)
                 counter += 1

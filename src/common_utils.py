@@ -91,11 +91,31 @@ def emb_to_word(emb):
     return most_similar_word, max_cosine_similarity
 
 
-def train_loader(wordvecs, train_set):
-    article_emb = words_to_embs(
-        wordvecs, nltk.tokenize.word_tokenize(train_set[0]["article"])
-    )
-    highlights_emb = words_to_embs(
-        wordvecs, nltk.tokenize.word_tokenize(train_set[0]["highlights"])
-    )
-    return article_emb, highlights_emb
+def train_loader(wordvecs, train_set, batch_size=16, emb_size=50):
+    n_batches = 2
+    for b in range(n_batches):
+        max_article_len = 0
+        max_highlights_len = 0
+        for i in range(batch_size):
+            A_tokens = nltk.tokenize.word_tokenize(train_set[i]["article"])
+            max_article_len = (
+                len(A_tokens) if len(A_tokens) > max_article_len else max_article_len
+            )
+            H_tokens = nltk.tokenize.word_tokenize(train_set[i]["article"])
+            max_highlights_len = (
+                len(H_tokens)
+                if len(H_tokens) > max_highlights_len
+                else max_highlights_len
+            )
+        article_embs = torch.zeros((batch_size, max_article_len, emb_size))
+        highlights_embs = torch.zeros((batch_size, max_highlights_len, emb_size))
+        for i in range(batch_size):
+            article_emb = words_to_embs(
+                wordvecs, nltk.tokenize.word_tokenize(train_set[0]["article"])
+            )
+            highlights_emb = words_to_embs(
+                wordvecs, nltk.tokenize.word_tokenize(train_set[0]["highlights"])
+            )
+            article_embs[i, : len(article_emb), :] = article_emb
+            highlights_embs[i, : len(highlights_emb), :] = highlights_emb
+        yield (article_embs, highlights_embs)
