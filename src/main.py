@@ -11,72 +11,99 @@ import glove
 import nltk
 from rouge_score import rouge_scorer
 import torch
-from sklearn.metrics.pairwise import cosine_similarity
+
+from models import *
+from common_utils import *
 
 
-def first_sent_baseline(text):
-    """
-    First sentence baseline. Returns the first sentence of the article in the datapoint text.
-    """
-    return nltk.tokenize.sent_tokenize(text["article"])
+class SummarizerParameters:
+    device = "cpu"
+
+    random_seed = 0
+
+    n_epochs = 30
+
+    batch_size = 128
+
+    learning_rate = 5e-4
+    weight_decay = 0
+
+    emb_dim = 50
+    enc_rnn_dim = 512
+    enc_rnn_depth = 1
+
+    dec_rnn_dim = 512
+    dec_rnn_depth = 1
+
+    max_train_sentences = 20000
+    max_valid_sentences = 1000
 
 
-def evaluate(data, model):
-    """
-    Evaluates a text summarizer model by returning the rouge-1, rouge-2 and rouge-L scores.
-    """
-    rouge_scores = np.zeros((len(data), 3))
-    for t, text in enumerate(tqdm(data)):
-        tokens = model(text)
+class Summarizer:
+    def __init__(self, params):
+        self.params = params
 
-        scorer = rouge_scorer.RougeScorer(
-            ["rouge1", "rouge2", "rougeL"], use_stemmer=True
+    def train(self, train_data):
+
+        p = self.params
+
+        # Setting a fixed seed for reproducibility.
+        torch.manual_seed(p.random_seed)
+        random.seed(p.random_seed)
+
+        # Build the encoder and decoder.
+        encoder = Encoder(p)
+        decoder = Decoder(p)
+        self.model = EncoderDecoder(encoder, decoder)
+
+        self.model.to(p.device)
+        print(" done.")
+
+        optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=p.learning_rate, weight_decay=p.weight_decay
         )
 
-        scores = scorer.score(
-            text["highlights"],
-            tokens[0],
-        )
-        rouge_scores[t] = np.array(
-            [scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2]]
-        )
-    return rouge_scores
+        # The loss function is a cross-entropy loss at the token level.
+        # We don't include padding tokens when computing the loss.
+        loss_func = torch.nn.CrossEntropyLoss(ignore_index=self.T_voc.get_pad_idx())
 
+        for epoch in range(1, p.n_epochs + 1):
 
-def rouge_hist(rouge_scores):
-    """
-    Draws histograms for the three rouge scores and adds a vertical line for the average.
-    """
-    fig, axs = plt.subplots(3)
-    titles = ["ROUGE-1", "ROUGE-2", "ROUGE-L"]
-    for i in range(3):
-        axs[i].hist(rouge_scores[:, i])
-        axs[i].axvline(
-            rouge_scores[:, i].mean(), color="k", linestyle="dashed", linewidth=1
-        )
-        axs[i].set_title(titles[i])
-    plt.show()
+            t0 = time.time()
 
+            loss_sum = 0
+            for i, (Sbatch, Tbatch) in enumerate(train_loader, 1):
 
-def cos_sim(x, y):
-    """
-    Returns the cosine similarity of x and y.
-    """
-    return np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
+                # We use teacher forcing to train the decoder.
+                # This means that the input at each decoding step will be the
+                # *gold-standard* word at the previous position.
+                # We create a tensor Tbatch_shifted that contains the previous words.
+                batch_size, sen_len = Tbatch.shape
+                zero_pad = torch.zeros(
+                    batch_size, 1, dtype=torch.long, device=Tbatch.device
+                )
+                Tbatch_shifted = torch.cat([zero_pad, Tbatch[:, :-1]], dim=1)
 
+                self.model.train()
+                scores = self.model(Sbatch, Tbatch_shifted)
+                if i == 1:
+                    print("scores.shape:", scores.shape, "Tbatch.shape:", Tbatch.shape)
+                    print(
+                        "scores.view(-1, len(self.T_voc)).shape:",
+                        scores.view(-1, len(self.T_voc)).shape,
+                        "Tbatch.view(-1):",
+                        Tbatch.view(-1).shape,
+                    )
+                    print("Tbatch", Tbatch)
+                loss = loss_func(scores.view(-1, len(self.T_voc)), Tbatch.view(-1))
 
-def emb_to_word(emb):
-    """
-    Returns the word with the highest cosine similarity with the input embedding emb.
-    """
-    max_cosine_similarity = 0
-    for w, wordvec in enumerate(tqdm(wordvecs.items())):
-        wordemb_with_noise = emb
-        cosine_sim = cos_sim(wordemb_with_noise, wordvec[1])
-        if cosine_sim > max_cosine_similarity:
-            most_similar_word = wordvec[0]
-            max_cosine_similarity = cosine_sim
-    return most_similar_word, max_cosine_similarity
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                loss_sum += loss.item()
+
+                print(".", end="")
+                sys.stdout.flush()
 
 
 # Required download for tokenization
@@ -86,15 +113,29 @@ nltk.download("punkt")
 dataset = load_dataset("cnn_dailymail", "3.0.0")
 train_set = dataset["train"]
 
+
+# summarizer = Summarizer(SummarizerParameters())
+# summarizer.train(train_data=train_set)
+
 # Load glove
+p = SummarizerParameters()
 glove = glove.Glove(
     glove_dir=str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
 )
-wordvecs = glove.load_glove(50)
+wordvecs = glove.load_glove(p.emb_dim)
 print("Done loading glove")
 
-# Evaluate the baseline
-# rouge_scores = evaluate(data=train_set.select(range(1000)), model=first_sent_baseline)
+# Try out the encoder
+a, h = train_loader(wordvecs, train_set)
+encoder = Encoder(p)
+enc_out = encoder(torch.unsqueeze(a, 0))
+print(type(enc_out))
+print(enc_out.shape)
+
+# # Evaluate the baseline
+# rouge_scores = evaluate(
+#     data=train_set.select(range(len(train_set))), model=lead_3_baseline
+# )
 # print("Averages:", np.mean(rouge_scores, axis=0))
 # rouge_hist(rouge_scores)
 
