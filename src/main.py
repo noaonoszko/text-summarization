@@ -28,11 +28,17 @@ train_set = dataset["train"]
 
 # Load glove
 p = SummarizerParameters()
+# glove_path = str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
+glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
 glove = glove.Glove(
-    glove_dir=str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
+    glove_dir=glove_path
 )
-wordvecs = glove.load_glove(p.emb_dim)
+vocab_size = 100
+wordvecs = glove.load_glove(p.emb_dim, vocab_size=vocab_size)
 print("Done loading glove")
+word_int_dict = {}
+for w, word in enumerate(wordvecs):
+    word_int_dict[word] = w
 
 # # Try out the encoder
 # a, h = train_loader(wordvecs, train_set)
@@ -42,8 +48,8 @@ print("Done loading glove")
 # print(enc_out.shape)
 
 # Try out the full network
-summarizer = Summarizer(SummarizerParameters())
-summarizer.train(wordvecs=wordvecs, train_set=train_set)
+summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
+summarizer.train(train_set=train_set)
 
 # # Evaluate the baseline
 # rouge_scores = evaluate(

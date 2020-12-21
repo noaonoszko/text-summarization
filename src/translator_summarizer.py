@@ -42,20 +42,21 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, param):
+    def __init__(self, params, wordvecs):
         super().__init__()
+        self.params = params
+        self.wordvecs = wordvecs
         self.rnn = nn.GRU(
-            param.emb_dim,
-            param.dec_rnn_dim,
-            param.dec_rnn_depth,
+            params.emb_dim,
+            params.dec_rnn_dim,
+            params.dec_rnn_depth,
             batch_first=True,
             bidirectional=False,
         )
-        voc_size = 400000
         self.output_layer = nn.Linear(
-            param.dec_rnn_dim + param.emb_dim, voc_size, bias=False
+            params.dec_rnn_dim + params.emb_dim, params.vocab_size, bias=False
         )
-        self.rnn_dim = param.dec_rnn_dim
+        self.rnn_dim = params.dec_rnn_dim
 
     def forward_step(self, prev_embed, enc_out, src_mask, decoder_hidden):
         rnn_input = prev_embed
@@ -67,7 +68,7 @@ class Decoder(nn.Module):
     # Apply the decoder in teacher forcing mode.
     def forward(self, enc_out, src_mask, H_shifted):
 
-        n_sen, n_words, _ = H_shifted.shape
+        n_sen, n_words = H_shifted.shape
 
         # Initialize the hidden state of the GRU.
         decoder_hidden = torch.zeros(1, n_sen, self.rnn_dim, device=src_mask.device)
@@ -75,10 +76,14 @@ class Decoder(nn.Module):
         all_out = []
 
         # For each position in the target sentence:
-        for i in trange(n_words):
-
+        for i in range(n_words):
+            
             # Embedding for the previous word.
-            prev_embed = H_shifted[:, i].unsqueeze(1)
+            # print("H_shifted[:, i]:", H_shifted[:, i], type(H_shifted[0, i]))
+            # print("words_to_embs(self.wordvecs, H_shifted[:, i]):", words_to_embs(self.wordvecs, list(H_shifted[:, i])))
+            # print(type(H_shifted[:, i]))
+            H_word_emb = torch.tensor(words_to_embs(self.wordvecs, list(H_shifted[:, i])), device=self.params.device)
+            prev_embed = H_word_emb.unsqueeze(1)
 
             # Run the decoder one step.
             # This returns a new hidden state, and the output
@@ -93,9 +98,10 @@ class Decoder(nn.Module):
 
 
 class SummarizerParameters:
-    device = "cpu"
+    device = "cuda"
 
     random_seed = 0
+    vocab_size = 400000
 
     n_epochs = 30
 
@@ -116,10 +122,12 @@ class SummarizerParameters:
 
 
 class Summarizer:
-    def __init__(self, params):
+    def __init__(self, params, wordvecs, word_int_dict):
         self.params = params
+        self.wordvecs = wordvecs
+        self.word_int_dict = word_int_dict
 
-    def train(self, wordvecs, train_set):
+    def train(self, train_set):
 
         p = self.params
 
@@ -129,7 +137,7 @@ class Summarizer:
 
         # Build the encoder and decoder.
         encoder = Encoder(p)
-        decoder = Decoder(p)
+        decoder = Decoder(p, self.wordvecs)
         self.model = EncoderDecoder(encoder, decoder)
 
         self.model.to(p.device)
@@ -142,34 +150,37 @@ class Summarizer:
         # The loss function is a cross-entropy loss at the token level.
         # We don't include padding tokens when computing the loss.
         loss_func = torch.nn.CrossEntropyLoss()
-
-        for epoch in range(1, p.n_epochs + 1):
-
+        
+        t = trange(1, p.n_epochs + 1)
+        for epoch in t:
             t0 = time.time()
 
             loss_sum = 0
-            t = train_loader(wordvecs, train_set)
-            for i, (Abatch, Hbatch) in enumerate(t, 1):
+            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_set), 1):
                 # We use teacher forcing to train the decoder.
                 # This means that the input at each decoding step will be the
                 # *gold-standard* word at the previous position.
                 # We create a tensor Hbatch_shifted that contains the previous words.
-                batch_size, sen_len, _ = Hbatch.shape
-                zero_pad = torch.zeros(
-                    (batch_size, 1, p.emb_dim), dtype=torch.long, device=p.device
-                )
-                Hbatch_shifted = torch.cat([zero_pad, Hbatch[:, :-1, :]], dim=1)
-
+                batch_size, sen_len = Hbatch.shape
+                zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
+                zero_pad = np.expand_dims(zero_pad, 1)
+                Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
                 self.model.train()
-                scores = self.model(Abatch, Hbatch_shifted)
-                # if i == 1:
-                #     print("scores.shape:", scores.shape, "Hbatch.shape:", Hbatch.shape)
-                loss = loss_func(scores.view(-1, len(self.T_voc)), Hbatch.view(-1))
+                scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
+                
+                # Convert highlight words to ints
+                Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)
+                for batch in range(Hbatch.shape[0]):
+                    Hbatch_int[batch] = words_to_ints(word_int_dict=self.word_int_dict, words=Hbatch[batch])
+                Hbatch = Hbatch_int
+                loss = loss_func(scores.view(-1, p.vocab_size), Hbatch.view(-1).type(torch.LongTensor).to(device=self.params.device))
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 loss_sum += loss.item()
 
-                print(".", end="")
-                sys.stdout.flush()
+                t.set_description("Epoch {}".format(epoch))
+                t.set_postfix(
+                    loss=loss.item()
+                )

@@ -6,6 +6,7 @@ from datasets import load_dataset
 
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import *
 
 import glove
 import nltk
@@ -68,14 +69,18 @@ def words_to_embs(wordvecs, words):
     """
     Returns the embedding of
     """
-    return torch.tensor(
-        [
-            wordvecs[word] if word in wordvecs else np.zeros(wordvecs["the"].shape[0])
-            for word in words
-        ],
-        dtype=torch.float32,
-    )
-
+    if type(words) == str:
+        wordvecs[words] if words in wordvecs else np.zeros(wordvecs["the"].shape[0]) # perhaps random
+    elif type(words) == list:
+        return torch.tensor(
+            [
+                wordvecs[word] if word in wordvecs else np.zeros(wordvecs["the"].shape[0])
+                for word in words
+            ],
+            dtype=torch.float32,
+        )
+def words_to_ints(word_int_dict, words):
+    return torch.tensor([word_int_dict[word] if word in word_int_dict else 0 for word in words]) # else 0, needs to be addressed!
 
 def emb_to_word(emb):
     """
@@ -91,7 +96,7 @@ def emb_to_word(emb):
     return most_similar_word, max_cosine_similarity
 
 
-def train_loader(wordvecs, train_set, batch_size=16, emb_size=50):
+def train_loader(wordvecs, word_int_dict, train_set, batch_size=16, emb_size=50):
     n_batches = 2
     for b in range(n_batches):
         max_article_len = 0
@@ -101,21 +106,19 @@ def train_loader(wordvecs, train_set, batch_size=16, emb_size=50):
             max_article_len = (
                 len(A_tokens) if len(A_tokens) > max_article_len else max_article_len
             )
-            H_tokens = nltk.tokenize.word_tokenize(train_set[i]["article"])
+            H_tokens = nltk.tokenize.word_tokenize(train_set[i]["highlights"])
             max_highlights_len = (
                 len(H_tokens)
                 if len(H_tokens) > max_highlights_len
                 else max_highlights_len
             )
-        article_embs = torch.zeros((batch_size, max_article_len, emb_size))
-        highlights_embs = torch.zeros((batch_size, max_highlights_len, emb_size))
+        article_emb_all = torch.zeros((batch_size, max_article_len, emb_size))
+        highlights_words_all = np.empty((batch_size, max_highlights_len), dtype=object)
         for i in range(batch_size):
             article_emb = words_to_embs(
-                wordvecs, nltk.tokenize.word_tokenize(train_set[0]["article"])
+                wordvecs, nltk.tokenize.word_tokenize(train_set[i]["article"])
             )
-            highlights_emb = words_to_embs(
-                wordvecs, nltk.tokenize.word_tokenize(train_set[0]["highlights"])
-            )
-            article_embs[i, : len(article_emb), :] = article_emb
-            highlights_embs[i, : len(highlights_emb), :] = highlights_emb
-        yield (article_embs, highlights_embs)
+            highlights_words = np.array(nltk.tokenize.word_tokenize(train_set[i]["highlights"]))
+            article_emb_all[i, : len(article_emb), :] = article_emb
+            highlights_words_all[i, : len(highlights_words)] = highlights_words
+        yield (article_emb_all, highlights_words_all)

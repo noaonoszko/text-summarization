@@ -1,13 +1,13 @@
 import numpy as np
-
+from collections import *
 
 class Glove:
     def __init__(self, glove_dir):
         self.glove_dir = glove_dir
 
-    def load_glove(self, size):
+    def load_glove(self, size, vocab_size):
         path = self.glove_dir + "glove.6B." + str(size) + "d.txt"
-        wordvecs = {}
+        wordvecs = OrderedDict()
         counter = 0
         with open(path, "r") as file:
             lines = file.readlines()
@@ -15,7 +15,7 @@ class Glove:
                 tokens = line.split(" ")
                 vec = np.array(tokens[1:], dtype=np.float32)
                 wordvecs[tokens[0]] = vec
-                if counter == 1000:
+                if counter == vocab_size:
                     break
                 if counter % 100000 == 0:
                     print("load_glove: parsing line ", counter)
