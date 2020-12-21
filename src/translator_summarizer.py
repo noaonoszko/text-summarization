@@ -79,9 +79,6 @@ class Decoder(nn.Module):
         for i in range(n_words):
             
             # Embedding for the previous word.
-            # print("H_shifted[:, i]:", H_shifted[:, i], type(H_shifted[0, i]))
-            # print("words_to_embs(self.wordvecs, H_shifted[:, i]):", words_to_embs(self.wordvecs, list(H_shifted[:, i])))
-            # print(type(H_shifted[:, i]))
             H_word_emb = torch.tensor(words_to_embs(self.wordvecs, list(H_shifted[:, i])), device=self.params.device)
             prev_embed = H_word_emb.unsqueeze(1)
 
@@ -141,7 +138,6 @@ class Summarizer:
         self.model = EncoderDecoder(encoder, decoder)
 
         self.model.to(p.device)
-        print(" done.")
 
         optimizer = torch.optim.Adam(
             self.model.parameters(), lr=p.learning_rate, weight_decay=p.weight_decay
@@ -167,6 +163,12 @@ class Summarizer:
                 Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
                 self.model.train()
                 scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
+                if i == 1:
+                    for w in range(Hbatch.shape[1]):
+                        best_word_int = torch.argmax(scores[0,w])
+                        print("best_word_int:", best_word_int.item())
+                        print(self.wordvecs.keys())
+                        print(list(self.wordvecs.keys())[best_word_int.item()])
                 
                 # Convert highlight words to ints
                 Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)

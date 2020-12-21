@@ -33,8 +33,7 @@ glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
 glove = glove.Glove(
     glove_dir=glove_path
 )
-vocab_size = 100
-wordvecs = glove.load_glove(p.emb_dim, vocab_size=vocab_size)
+wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
 print("Done loading glove")
 word_int_dict = {}
 for w, word in enumerate(wordvecs):
