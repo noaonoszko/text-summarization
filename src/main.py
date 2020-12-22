@@ -21,11 +21,8 @@ nltk.download("punkt")
 # Load cnn data
 dataset = load_dataset("cnn_dailymail", "3.0.0")
 train_set = dataset["train"]
+val_set = dataset["validation"]
 test_set = dataset["test"]
-
-
-# summarizer = Summarizer(SummarizerParameters())
-# summarizer.train(train_data=train_set)
 
 # Load glove
 p = SummarizerParameters()
@@ -40,17 +37,11 @@ word_int_dict = {}
 for w, word in enumerate(wordvecs):
     word_int_dict[word] = w
 
-# # Try out the encoder
-# a, h = train_loader(wordvecs, train_set)
-# encoder = Encoder(p)
-# enc_out = encoder(torch.unsqueeze(a, 0))
-# print(type(enc_out))
-# print(enc_out.shape)
-
 # Try out the full network
 summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
-summarizer.train(data=train_set)
-summarizer.validate(data=test_set)
+n_train = 10000
+print(train_set[:5].shape)
+# summarizer.train(train_data=t, val_data=val_set)
 
 
 # # Evaluate the baseline

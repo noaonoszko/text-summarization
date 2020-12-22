@@ -97,28 +97,35 @@ def emb_to_word(emb):
 
 
 def train_loader(wordvecs, word_int_dict, train_set, batch_size=16, emb_size=50):
-    n_batches = 2
+    n_batches = int(train_set.shape[0]/batch_size) + 1
     for b in range(n_batches):
+        # Calculate max length of articles and highlights in batch
         max_article_len = 0
         max_highlights_len = 0
         for i in range(batch_size):
-            A_tokens = nltk.tokenize.word_tokenize(train_set[i]["article"])
+            A_tokens = nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["article"])
             max_article_len = (
                 len(A_tokens) if len(A_tokens) > max_article_len else max_article_len
             )
-            H_tokens = nltk.tokenize.word_tokenize(train_set[i]["highlights"])
+            H_tokens = nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["highlights"])
             max_highlights_len = (
                 len(H_tokens)
                 if len(H_tokens) > max_highlights_len
                 else max_highlights_len
             )
-        article_emb_all = torch.zeros((batch_size, max_article_len, emb_size))
-        highlights_words_all = np.empty((batch_size, max_highlights_len), dtype=object)
+        
+        # Prepare batches
+        if b == n_batches - 1: # last batch is sometimes smaller
+            article_emb_all = torch.zeros((train_set.shape[0]-b*batch_size, max_article_len, emb_size))
+            highlights_words_all = np.empty((train_set.shape[0]-b*batch_size, max_highlights_len), dtype=object)
+        else:
+            article_emb_all = torch.zeros((batch_size, max_article_len, emb_size))
+            highlights_words_all = np.empty((batch_size, max_highlights_len), dtype=object)
         for i in range(batch_size):
             article_emb = words_to_embs(
-                wordvecs, nltk.tokenize.word_tokenize(train_set[i]["article"])
+                wordvecs, nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["article"])
             )
-            highlights_words = np.array(nltk.tokenize.word_tokenize(train_set[i]["highlights"]))
+            highlights_words = np.array(nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["highlights"]))
             article_emb_all[i, : len(article_emb), :] = article_emb
             highlights_words_all[i, : len(highlights_words)] = highlights_words
         yield (article_emb_all, highlights_words_all)

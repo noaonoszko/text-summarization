@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+# from torch.utils.train_data import train_DataLoader
 
 import time
 import numpy as np
@@ -144,7 +144,7 @@ class Summarizer:
                 for w in range(Hbatch.shape[1]):
                     print(Hbatch[i,w], end=" ")        
 
-    def train(self, data):
+    def train(self, train_data, val_data=False):
 
         p = self.params
 
@@ -167,42 +167,29 @@ class Summarizer:
         
         t = trange(1, p.n_epochs + 1)
         for epoch in t:
-            t0 = time.time()
-
-            loss_sum = 0
-            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data), 1):
-                # We use teacher forcing to train the decoder.
-                # This means that the input at each decoding step will be the
-                # *gold-standard* word at the previous position.
-                # We create a tensor Hbatch_shifted that contains the previous words.
+            for i, (Abatch, Hbatch) in enumerate(tqdm(train_loader(self.wordvecs, self.word_int_dict, train_data))):
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
                 zero_pad = np.expand_dims(zero_pad, 1)
                 Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
                 self.model.train()
                 scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
-
-                # if i < 5 and epoch % 50 == 0:
-                #     print("\n\ni =", i)
-                #     print("----------------------------output----------------------------")
-                #     for w in range(Hbatch.shape[1]):
-                #         best_word_int = torch.argmax(scores[i,w])
-                #         print(list(self.wordvecs.keys())[best_word_int.item()], end=" ")
-                #     print("\n----------------------------target----------------------------")
-                #     for w in range(Hbatch.shape[1]):
-                #         print(Hbatch[i,w], end=" ")
                 
                 # Convert highlight words to ints
                 Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)
                 for batch in range(Hbatch.shape[0]):
                     Hbatch_int[batch] = words_to_ints(word_int_dict=self.word_int_dict, words=Hbatch[batch])
                 Hbatch = Hbatch_int
+                
+                # Backprop
                 loss = loss_func(scores.view(-1, p.vocab_size), Hbatch.view(-1).type(torch.LongTensor).to(device=self.params.device))
-
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                loss_sum += loss.item()
+                
+                # Validate
+                if i % self.val_every == 0:
+                    validate(val_data)
 
                 t.set_description("Epoch {}".format(epoch))
                 t.set_postfix(
