@@ -102,7 +102,8 @@ def train_loader(wordvecs, word_int_dict, train_set, batch_size=16, emb_size=50)
         # Calculate max length of articles and highlights in batch
         max_article_len = 0
         max_highlights_len = 0
-        for i in range(batch_size):
+        actual_batch_size = batch_size if b < n_batches - 1 else train_set.shape[0]-batch_size*b
+        for i in range(actual_batch_size):
             A_tokens = nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["article"])
             max_article_len = (
                 len(A_tokens) if len(A_tokens) > max_article_len else max_article_len
@@ -115,13 +116,10 @@ def train_loader(wordvecs, word_int_dict, train_set, batch_size=16, emb_size=50)
             )
         
         # Prepare batches
-        if b == n_batches - 1: # last batch is sometimes smaller
-            article_emb_all = torch.zeros((train_set.shape[0]-b*batch_size, max_article_len, emb_size))
-            highlights_words_all = np.empty((train_set.shape[0]-b*batch_size, max_highlights_len), dtype=object)
-        else:
-            article_emb_all = torch.zeros((batch_size, max_article_len, emb_size))
-            highlights_words_all = np.empty((batch_size, max_highlights_len), dtype=object)
-        for i in range(batch_size):
+        actual_batch_size = batch_size if b < n_batches - 1 else train_set.shape[0]-b*batch_size # last batch is sometimes smaller
+        article_emb_all = torch.zeros((actual_batch_size, max_article_len, emb_size))
+        highlights_words_all = np.empty((actual_batch_size, max_highlights_len), dtype=object)
+        for i in range(actual_batch_size):
             article_emb = words_to_embs(
                 wordvecs, nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["article"])
             )

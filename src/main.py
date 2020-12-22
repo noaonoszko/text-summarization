@@ -31,17 +31,22 @@ glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
 glove = glove.Glove(
     glove_dir=glove_path
 )
-wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
+# wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
+wordvecs = glove.load_glove(p.emb_dim, vocab_size=1)
 print("Done loading glove")
 word_int_dict = {}
 for w, word in enumerate(wordvecs):
     word_int_dict[word] = w
 
-# Try out the full network
-summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
-n_train = 10000
-print(train_set[:5].shape)
-# summarizer.train(train_data=t, val_data=val_set)
+# Use less training data
+n_train = 500
+train_subset = np.empty(n_train, dtype=object)
+for i in range(n_train):
+    train_subset[i] = train_set[i]
+
+# Train and validate the translator summarizer
+summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict, val_every=10)
+summarizer.train(train_data=train_subset, val_data=val_set)
 
 
 # # Evaluate the baseline

@@ -100,7 +100,7 @@ class SummarizerParameters:
     random_seed = 0
     vocab_size = 400000
 
-    n_epochs = 200
+    n_epochs = 30
 
     batch_size = 128
 
@@ -167,7 +167,7 @@ class Summarizer:
         
         t = trange(1, p.n_epochs + 1)
         for epoch in t:
-            for i, (Abatch, Hbatch) in enumerate(tqdm(train_loader(self.wordvecs, self.word_int_dict, train_data))):
+            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
                 zero_pad = np.expand_dims(zero_pad, 1)
@@ -188,8 +188,8 @@ class Summarizer:
                 optimizer.step()
                 
                 # Validate
-                if i % self.val_every == 0:
-                    validate(val_data)
+                if i % self.val_every == 0 and i is not 0:
+                    self.validate(val_data)
 
                 t.set_description("Epoch {}".format(epoch))
                 t.set_postfix(
