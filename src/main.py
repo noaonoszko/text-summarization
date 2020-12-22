@@ -70,13 +70,17 @@ args = parser.parse_args()
 # Use less training data
 n_epochs = args.epochs
 n_train = args.n_train
+n_val = int(n_train/10)
 train_subset = np.empty(n_train, dtype=object)
 for i in range(n_train):
     train_subset[i] = train_set[i]
+val_subset = np.empty(n_train, dtype=object)
+for i in range(n_val):
+    val_subset[i] = train_set[i]
 
 # Train and validate the translator summarizer
 summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
-summarizer.train(train_data=train_subset, val_data=val_set, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
+summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
 
 
 # # Evaluate the baseline

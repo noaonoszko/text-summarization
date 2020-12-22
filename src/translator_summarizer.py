@@ -122,12 +122,12 @@ class Summarizer:
     
     def validate(self, data, generate=False):
         p = self.params
+        self.model.eval()
         for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data), 1):
             batch_size, sen_len = Hbatch.shape
             zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
             zero_pad = np.expand_dims(zero_pad, 1)
             Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
-            self.model.eval()
             scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
             loss_func = torch.nn.CrossEntropyLoss()
             
@@ -149,7 +149,6 @@ class Summarizer:
             return val_loss
 
     def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50):
-
         p = self.params
 
         # Setting a fixed seed for reproducibility.
@@ -169,14 +168,23 @@ class Summarizer:
         # We don't include padding tokens when computing the loss.
         loss_func = torch.nn.CrossEntropyLoss()
         
+        # # Print memory usage
+        # tt = torch.cuda.get_device_properties(0).total_memory
+        # c = torch.cuda.memory_cached(0)
+        # a = torch.cuda.memory_allocated(0)
+        # f = c-a  # free inside cache
+        # print(tt, c, a, f)
+
         t = trange(1, n_epochs + 1)
         for epoch in t:
+            torch.cuda.empty_cache()
             for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
                 zero_pad = np.expand_dims(zero_pad, 1)
                 Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
                 self.model.train()
+                print("------------------Before scores------------------")
                 scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
                 
                 # Convert highlight words to ints
@@ -198,6 +206,13 @@ class Summarizer:
                     t.set_postfix(
                         loss=loss.item(), val_loss=val_loss.item()
                     )
+
+                # Print memory usage
+                tt = torch.cuda.get_device_properties(0).total_memory
+                c = torch.cuda.memory_cached(0)
+                a = torch.cuda.memory_allocated(0)
+                f = c-a  # free inside cache
+                print(tt, c, a, f)
 
                 t.set_description("Epoch {}".format(epoch))
                 sys.stdout.flush()
