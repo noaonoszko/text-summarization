@@ -21,6 +21,7 @@ nltk.download("punkt")
 # Load cnn data
 dataset = load_dataset("cnn_dailymail", "3.0.0")
 train_set = dataset["train"]
+test_set = dataset["test"]
 
 
 # summarizer = Summarizer(SummarizerParameters())
@@ -48,7 +49,9 @@ for w, word in enumerate(wordvecs):
 
 # Try out the full network
 summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
-summarizer.train(train_set=train_set)
+summarizer.train(data=train_set)
+summarizer.validate(data=test_set)
+
 
 # # Evaluate the baseline
 # rouge_scores = evaluate(

@@ -100,11 +100,11 @@ class SummarizerParameters:
     random_seed = 0
     vocab_size = 400000
 
-    n_epochs = 30
+    n_epochs = 200
 
     batch_size = 128
 
-    learning_rate = 5e-4
+    learning_rate = 5e-2
     weight_decay = 0
 
     emb_dim = 50
@@ -119,12 +119,32 @@ class SummarizerParameters:
 
 
 class Summarizer:
-    def __init__(self, params, wordvecs, word_int_dict):
+    def __init__(self, params, wordvecs, word_int_dict, val_every=50):
         self.params = params
         self.wordvecs = wordvecs
         self.word_int_dict = word_int_dict
+        self.val_every = val_every
+    
+    def validate(self, data):
+        p = self.params
+        for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data), 1):
+            batch_size, sen_len = Hbatch.shape
+            zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
+            zero_pad = np.expand_dims(zero_pad, 1)
+            Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
+            self.model.eval()
+            scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
+            if i < 5:
+                print("\n\ni =", i)
+                print("----------------------------output----------------------------")
+                for w in range(Hbatch.shape[1]):
+                    best_word_int = torch.argmax(scores[i,w])
+                    print(list(self.wordvecs.keys())[best_word_int.item()], end=" ")
+                print("\n----------------------------target----------------------------")
+                for w in range(Hbatch.shape[1]):
+                    print(Hbatch[i,w], end=" ")        
 
-    def train(self, train_set):
+    def train(self, data):
 
         p = self.params
 
@@ -136,9 +156,7 @@ class Summarizer:
         encoder = Encoder(p)
         decoder = Decoder(p, self.wordvecs)
         self.model = EncoderDecoder(encoder, decoder)
-
         self.model.to(p.device)
-
         optimizer = torch.optim.Adam(
             self.model.parameters(), lr=p.learning_rate, weight_decay=p.weight_decay
         )
@@ -152,7 +170,7 @@ class Summarizer:
             t0 = time.time()
 
             loss_sum = 0
-            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_set), 1):
+            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data), 1):
                 # We use teacher forcing to train the decoder.
                 # This means that the input at each decoding step will be the
                 # *gold-standard* word at the previous position.
@@ -163,12 +181,16 @@ class Summarizer:
                 Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
                 self.model.train()
                 scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
-                if i == 1:
-                    for w in range(Hbatch.shape[1]):
-                        best_word_int = torch.argmax(scores[0,w])
-                        print("best_word_int:", best_word_int.item())
-                        print(self.wordvecs.keys())
-                        print(list(self.wordvecs.keys())[best_word_int.item()])
+
+                # if i < 5 and epoch % 50 == 0:
+                #     print("\n\ni =", i)
+                #     print("----------------------------output----------------------------")
+                #     for w in range(Hbatch.shape[1]):
+                #         best_word_int = torch.argmax(scores[i,w])
+                #         print(list(self.wordvecs.keys())[best_word_int.item()], end=" ")
+                #     print("\n----------------------------target----------------------------")
+                #     for w in range(Hbatch.shape[1]):
+                #         print(Hbatch[i,w], end=" ")
                 
                 # Convert highlight words to ints
                 Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)
@@ -186,3 +208,4 @@ class Summarizer:
                 t.set_postfix(
                     loss=loss.item()
                 )
+                sys.stdout.flush()
