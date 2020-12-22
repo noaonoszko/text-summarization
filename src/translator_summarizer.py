@@ -95,12 +95,11 @@ class Decoder(nn.Module):
 
 
 class SummarizerParameters:
-    device = "cuda"
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     random_seed = 0
     vocab_size = 400000
 
-    n_epochs = 30
 
     batch_size = 128
 
@@ -114,18 +113,14 @@ class SummarizerParameters:
     dec_rnn_dim = 512
     dec_rnn_depth = 1
 
-    max_train_sentences = 20000
-    max_valid_sentences = 1000
-
 
 class Summarizer:
-    def __init__(self, params, wordvecs, word_int_dict, val_every=50):
+    def __init__(self, params, wordvecs, word_int_dict):
         self.params = params
         self.wordvecs = wordvecs
         self.word_int_dict = word_int_dict
-        self.val_every = val_every
     
-    def validate(self, data):
+    def validate(self, data, generate=False):
         p = self.params
         for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data), 1):
             batch_size, sen_len = Hbatch.shape
@@ -134,7 +129,15 @@ class Summarizer:
             Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
             self.model.eval()
             scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
-            if i < 5:
+            loss_func = torch.nn.CrossEntropyLoss()
+            
+            # Convert highlight words to ints
+            Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)
+            for batch in range(Hbatch.shape[0]):
+                Hbatch_int[batch] = words_to_ints(word_int_dict=self.word_int_dict, words=Hbatch[batch])
+            Hbatch = Hbatch_int
+            val_loss = loss_func(scores.view(-1, p.vocab_size), Hbatch.view(-1).type(torch.LongTensor).to(device=self.params.device))
+            if generate and i < 5:
                 print("\n\ni =", i)
                 print("----------------------------output----------------------------")
                 for w in range(Hbatch.shape[1]):
@@ -143,8 +146,9 @@ class Summarizer:
                 print("\n----------------------------target----------------------------")
                 for w in range(Hbatch.shape[1]):
                     print(Hbatch[i,w], end=" ")        
+            return val_loss
 
-    def train(self, train_data, val_data=False):
+    def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50):
 
         p = self.params
 
@@ -165,7 +169,7 @@ class Summarizer:
         # We don't include padding tokens when computing the loss.
         loss_func = torch.nn.CrossEntropyLoss()
         
-        t = trange(1, p.n_epochs + 1)
+        t = trange(1, n_epochs + 1)
         for epoch in t:
             for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
                 batch_size, sen_len = Hbatch.shape
@@ -188,11 +192,12 @@ class Summarizer:
                 optimizer.step()
                 
                 # Validate
-                if i % self.val_every == 0 and i is not 0:
-                    self.validate(val_data)
+                if epoch % val_every == 0 and epoch is not 1:
+                    generate = True if epoch % generate_every == 0 else False
+                    val_loss = self.validate(val_data, generate)
+                    t.set_postfix(
+                        loss=loss.item(), val_loss=val_loss.item()
+                    )
 
                 t.set_description("Epoch {}".format(epoch))
-                t.set_postfix(
-                    loss=loss.item()
-                )
                 sys.stdout.flush()

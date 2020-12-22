@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from tqdm.auto import trange
 from pathlib import Path
+import argparse
 
 from datasets import load_dataset
 
@@ -38,15 +39,44 @@ word_int_dict = {}
 for w, word in enumerate(wordvecs):
     word_int_dict[word] = w
 
+# Argparsers
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--epochs",
+    help="Number of epochs",
+    type=int,
+    default=200,
+)
+parser.add_argument(
+    "--n_train",
+    help="Number of training examples",
+    type=int,
+    default=50,
+)
+parser.add_argument(
+    "--val_every",
+    help="Validation frequency",
+    type=int,
+    default=50,
+)
+parser.add_argument(
+    "--generate_every",
+    help="How often to generate a sentence",
+    type=int,
+    default=50,
+)
+args = parser.parse_args()
+
 # Use less training data
-n_train = 500
+n_epochs = args.epochs
+n_train = args.n_train
 train_subset = np.empty(n_train, dtype=object)
 for i in range(n_train):
     train_subset[i] = train_set[i]
 
 # Train and validate the translator summarizer
-summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict, val_every=10)
-summarizer.train(train_data=train_subset, val_data=val_set)
+summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
+summarizer.train(train_data=train_subset, val_data=val_set, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
 
 
 # # Evaluate the baseline
