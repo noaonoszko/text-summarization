@@ -71,12 +71,8 @@ args = parser.parse_args()
 n_epochs = args.epochs
 n_train = args.n_train
 n_val = int(n_train/10)
-train_subset = np.empty(n_train, dtype=object)
-for i in range(n_train):
-    train_subset[i] = train_set[i]
-val_subset = np.empty(n_train, dtype=object)
-for i in range(n_val):
-    val_subset[i] = train_set[i]
+train_subset = train_set.select(range(n_train))
+val_subset = val_set.select(range(n_val))
 
 # Train and validate the translator summarizer
 summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
