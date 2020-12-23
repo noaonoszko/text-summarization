@@ -12,7 +12,43 @@ import random
 import matplotlib.pyplot as plt
 from common_utils import *
 
+class BahdanauAttention(nn.Module):
+   
+    def __init__(self, hidden_size, key_size, query_size):
+        super().__init__()
+       
+        self.key_layer = nn.Linear(key_size, hidden_size, bias=False)
+        self.query_layer = nn.Linear(query_size, hidden_size, bias=False)
+        self.energy_layer = nn.Sequential(
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1, bias=False)
+        )
+       
+    def precompute_key(self, encoder_out):
+        # encoder_out shape: (n_sentences, n_src_words, encoder_rnn_size)
+        return self.key_layer(encoder_out)
+   
+    def forward(self, query, precomputed_key, value, mask):
+        # query shape: (n_sentences, 1, decoder_rnn_size)
+        # precomputed_key shape: (n_sentences, n_src_words, hidden_size)
 
+        query = self.query_layer(query)
+           
+        # Calculate scores.
+        scores = self.energy_layer(query + precomputed_key).squeeze(2)
+
+        #####
+       
+        # scores.data.masked_fill_(~mask, -float('inf'))
+               
+        # Turn scores to probabilities.
+        alphas = F.softmax(scores, dim=1)       
+       
+        # The context vector is the weighted sum of the values.
+        context = torch.bmm(alphas.unsqueeze(1), value)
+       
+        return context, alphas       
+       
 class EncoderDecoder(nn.Module):
     def __init__(self, encoder, decoder):
         super().__init__()
@@ -46,22 +82,40 @@ class Decoder(nn.Module):
         super().__init__()
         self.params = params
         self.wordvecs = wordvecs
+        attn_dim = 2*params.enc_rnn_dim
         self.rnn = nn.GRU(
-            params.emb_dim,
+            params.emb_dim+attn_dim,
             params.dec_rnn_dim,
             params.dec_rnn_depth,
             batch_first=True,
             bidirectional=False,
         )
         self.output_layer = nn.Linear(
-            params.dec_rnn_dim + params.emb_dim, params.vocab_size, bias=False
+            params.dec_rnn_dim + attn_dim + params.emb_dim, params.vocab_size, bias=False
         )
         self.rnn_dim = params.dec_rnn_dim
+        self.attention = BahdanauAttention(hidden_size=attn_dim,
+                                           query_size=params.dec_rnn_dim,
+                                           key_size=2*params.enc_rnn_dim)
 
-    def forward_step(self, prev_embed, enc_out, src_mask, decoder_hidden):
-        rnn_input = prev_embed
+    def forward_step(self, prev_embed, enc_out, src_mask, precomputed_key, decoder_hidden):
+        # The "query" for attention is the hidden state of the decoder.
+        query = decoder_hidden[-1].unsqueeze(1)  
+        
+        # Apply the attention model to compute a "context", summary of the encoder output
+        # based on the current query.
+        # Also returns the attention weights, which we might want to visualize or inspect.
+        # print("query.shape, precomputed_key.shape, enc_out.shape, src_mask.shape:\n", query.shape, precomputed_key.shape, enc_out.shape, src_mask.shape, "\n")
+        context, attn_probs = self.attention(
+            query=query, precomputed_key=precomputed_key,
+            value=enc_out, mask=src_mask)
+        
+        # Feed through rnn
+        rnn_input = torch.cat([prev_embed, context], dim=2)
         rnn_output, decoder_hidden = self.rnn(rnn_input, decoder_hidden)
-        pre_output = torch.cat([prev_embed, rnn_output], dim=2)
+
+        # Feed through output layer
+        pre_output = torch.cat([prev_embed, rnn_output, context], dim=2)
         T_output = self.output_layer(pre_output)
         return decoder_hidden, T_output
 
@@ -82,11 +136,14 @@ class Decoder(nn.Module):
             H_word_emb = words_to_embs(self.wordvecs, list(H_shifted[:, b])).to(self.params.device)
             prev_embed = H_word_emb.unsqueeze(1)
 
+            # Precompute attention keys (if needed).
+            precomputed_key = self.attention.precompute_key(enc_out)
+
             # Run the decoder one step.
             # This returns a new hidden state, and the output
             # scores (over the target vocabulary) at this position.
             decoder_hidden, H_output = self.forward_step(
-                prev_embed, enc_out, src_mask, decoder_hidden
+                prev_embed, enc_out, src_mask, precomputed_key, decoder_hidden
             )
             all_out.append(H_output)
 
@@ -123,7 +180,7 @@ class Summarizer:
     def validate(self, data, generate=False):
         p = self.params
         self.model.eval()
-        for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data)):
+        for b, (Abatch, Hbatch, lengths) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data, batch_size=3)):
             batch_size, sen_len = Hbatch.shape
             zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
             zero_pad = np.expand_dims(zero_pad, 1)
@@ -211,4 +268,4 @@ class Summarizer:
 
                 t.set_description("Epoch {}".format(epoch))
                 sys.stdout.flush()
-            # del Hbatch_shifted, Hbatch_int, 
+            del Hbatch_shifted, Hbatch_int
