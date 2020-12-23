@@ -97,7 +97,7 @@ def emb_to_word(emb):
     return most_similar_word, max_cosine_similarity
 
 
-def train_loader(wordvecs, word_int_dict, train_set, batch_size=10, emb_size=50):
+def train_loader(wordvecs, word_int_dict, train_set, batch_size=5, emb_size=50):
     n_batches = int(len(train_set)/batch_size) + 1
     for b in range(n_batches):
         # Calculate max length of articles and highlights in batch

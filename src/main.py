@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from tqdm.auto import trange
 from pathlib import Path
+import sys
 import argparse
 
 from datasets import load_dataset
@@ -32,8 +33,8 @@ glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
 glove = glove.Glove(
     glove_dir=glove_path
 )
-# wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
-wordvecs = glove.load_glove(p.emb_dim, vocab_size=1)
+wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
+# wordvecs = glove.load_glove(p.emb_dim, vocab_size=1)
 print("Done loading glove")
 word_int_dict = {}
 for w, word in enumerate(wordvecs):

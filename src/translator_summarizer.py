@@ -76,10 +76,10 @@ class Decoder(nn.Module):
         all_out = []
 
         # For each position in the target sentence:
-        for i in range(n_words):
+        for b in range(n_words):
             
             # Embedding for the previous word.
-            H_word_emb = words_to_embs(self.wordvecs, list(H_shifted[:, i])).to(self.params.device)
+            H_word_emb = words_to_embs(self.wordvecs, list(H_shifted[:, b])).to(self.params.device)
             prev_embed = H_word_emb.unsqueeze(1)
 
             # Run the decoder one step.
@@ -103,7 +103,7 @@ class SummarizerParameters:
 
     batch_size = 128
 
-    learning_rate = 5e-2
+    learning_rate = 1e-1
     weight_decay = 0
 
     emb_dim = 50
@@ -123,7 +123,7 @@ class Summarizer:
     def validate(self, data, generate=False):
         p = self.params
         self.model.eval()
-        for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data)):
+        for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data)):
             batch_size, sen_len = Hbatch.shape
             zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
             zero_pad = np.expand_dims(zero_pad, 1)
@@ -136,15 +136,15 @@ class Summarizer:
             for batch in range(Hbatch.shape[0]):
                 Hbatch_int[batch] = words_to_ints(word_int_dict=self.word_int_dict, words=Hbatch[batch])
             val_loss = loss_func(scores.view(-1, p.vocab_size), Hbatch_int.view(-1).type(torch.LongTensor).to(device=self.params.device))
-            if generate and i < 5:
-                print("\n\ni =", i)
+            if generate and b < 5:
+                print("\n\ni =", b)
                 print("----------------------------output----------------------------")
                 for w in range(Hbatch.shape[1]):
-                    best_word_int = torch.argmax(scores[i,w])
+                    best_word_int = torch.argmax(scores[b,w])
                     print(list(self.wordvecs.keys())[best_word_int.item()], end=" ")
                 print("\n----------------------------target----------------------------")
                 for w in range(Hbatch.shape[1]):
-                    print(Hbatch[i,w], end=" ")        
+                    print(Hbatch[b,w], end=" ")        
             return val_loss
 
     def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50):
@@ -167,19 +167,12 @@ class Summarizer:
         # We don't include padding tokens when computing the loss.
         loss_func = torch.nn.CrossEntropyLoss()
         
-        # # Print memory usage
-        # tt = torch.cuda.get_device_properties(0).total_memory
-        # c = torch.cuda.memory_cached(0)
-        # a = torch.cuda.memory_allocated(0)
-        # f = c-a  # free inside cache
-        # print(tt, c, a, f)
-        
-        train_losses = torch.zeros(n_epochs)
-        val_losses = torch.zeros(n_epochs)
+        train_losses = torch.zeros(n_epochs, requires_grad=False)
+        val_losses = torch.zeros(n_epochs, requires_grad=False)
         t = trange(1, n_epochs + 1)
         for epoch in t:
             # torch.cuda.empty_cache()
-            for i, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
+            for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
                 self.model.train()
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
@@ -195,29 +188,27 @@ class Summarizer:
                 
                 # Backprop
                 loss = loss_func(scores.view(-1, p.vocab_size), Hbatch.view(-1).type(torch.LongTensor).to(device=self.params.device))
-                train_losses[epoch] = loss
+                train_losses[epoch-1] = loss
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 
                 # Validate
-                if epoch % val_every == 0 and epoch is not 1:
-                    generate = True if epoch % generate_every == 0 else False
+                if epoch % val_every == 0 and b == 0:
+                    generate = True if epoch % generate_every == 0 or epoch == n_epochs else False
                     val_loss = self.validate(val_data, generate)
-                    val_losses[epoch] = val_loss
+                    val_losses[epoch-1] = val_loss
+                    
+                    # Save loss plot
+                    if generate:
+                        plt.plot(train_losses.detach())
+                        plt.plot(val_losses.detach())
+                        plt.savefig("loss.png")
+
                     t.set_postfix(
                         loss=loss.item(), val_loss=val_loss.item()
                     )
 
-                # # Print memory usage
-                # tt = torch.cuda.get_device_properties(0).total_memory
-                # c = torch.cuda.memory_cached(0)
-                # a = torch.cuda.memory_allocated(0)
-                # f = c-a  # free inside cache
-                # print(tt, c, a, f)
-
                 t.set_description("Epoch {}".format(epoch))
                 sys.stdout.flush()
-        # plt.plot(train_loss)
-        # plt.plot(val_loss)
-        # plt.savefig("loss.py")
+            # del Hbatch_shifted, Hbatch_int, 
