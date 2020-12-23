@@ -155,19 +155,19 @@ class SummarizerParameters:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     random_seed = 0
-    vocab_size = 400000
+    vocab_size = 10000
 
 
-    batch_size = 128
+    batch_size = 5
 
-    learning_rate = 1e-1
+    learning_rate = 1e-2
     weight_decay = 0
 
     emb_dim = 50
-    enc_rnn_dim = 512
+    enc_rnn_dim = 50#512
     enc_rnn_depth = 1
 
-    dec_rnn_dim = 512
+    dec_rnn_dim = 50#512
     dec_rnn_depth = 1
 
 
@@ -180,7 +180,7 @@ class Summarizer:
     def validate(self, data, generate=False):
         p = self.params
         self.model.eval()
-        for b, (Abatch, Hbatch, lengths) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data, batch_size=3)):
+        for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data, batch_size=3)):
             batch_size, sen_len = Hbatch.shape
             zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
             zero_pad = np.expand_dims(zero_pad, 1)
@@ -204,7 +204,7 @@ class Summarizer:
                     print(Hbatch[b,w], end=" ")        
             return val_loss
 
-    def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50):
+    def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50, batch_size=5):
         p = self.params
 
         # Setting a fixed seed for reproducibility.
@@ -229,7 +229,7 @@ class Summarizer:
         t = trange(1, n_epochs + 1)
         for epoch in t:
             # torch.cuda.empty_cache()
-            for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data)):
+            for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data, batch_size=p.batch_size)):
                 self.model.train()
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
@@ -268,4 +268,4 @@ class Summarizer:
 
                 t.set_description("Epoch {}".format(epoch))
                 sys.stdout.flush()
-            del Hbatch_shifted, Hbatch_int
+            del Hbatch_shifted, Hbatch_int, Hbatch, scores
