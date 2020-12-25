@@ -127,13 +127,13 @@ class Decoder(nn.Module):
         # Initialize the hidden state of the GRU.
         decoder_hidden = torch.zeros(1, n_sen, self.rnn_dim, device=src_mask.device)
 
-        all_out = []
+        all_out = torch.zeros((n_sen, n_words, self.params.vocab_size), device=self.params.device)
 
         # For each position in the target sentence:
-        for b in range(n_words):
+        for w in range(n_words):
             
             # Embedding for the previous word.
-            H_word_emb = words_to_embs(self.wordvecs, list(H_shifted[:, b])).to(self.params.device)
+            H_word_emb = words_to_embs(self.params.device, self.wordvecs, list(H_shifted[:, w]))
             prev_embed = H_word_emb.unsqueeze(1)
 
             # Precompute attention keys (if needed).
@@ -145,10 +145,10 @@ class Decoder(nn.Module):
             decoder_hidden, H_output = self.forward_step(
                 prev_embed, enc_out, src_mask, precomputed_key, decoder_hidden
             )
-            all_out.append(H_output)
+            all_out[:, w, :] = H_output.squeeze()
 
         # Combine the output scores for all positions.
-        return torch.cat(all_out, dim=1)
+        return all_out
 
 
 class SummarizerParameters:
@@ -158,7 +158,7 @@ class SummarizerParameters:
     vocab_size = 10000
 
 
-    batch_size = 5
+    batch_size = 32
 
     learning_rate = 1e-2
     weight_decay = 0
@@ -180,12 +180,12 @@ class Summarizer:
     def validate(self, data, generate=False):
         p = self.params
         self.model.eval()
-        for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, data, batch_size=3)):
+        for b, (Abatch, Hbatch) in enumerate(train_loader(p, self.wordvecs, self.word_int_dict, data, batch_size=3)):
             batch_size, sen_len = Hbatch.shape
             zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
             zero_pad = np.expand_dims(zero_pad, 1)
             Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
-            scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
+            scores = self.model(Abatch, Hbatch_shifted)
             loss_func = torch.nn.CrossEntropyLoss()
             
             # Convert highlight words to ints
@@ -229,26 +229,26 @@ class Summarizer:
         t = trange(1, n_epochs + 1)
         for epoch in t:
             # torch.cuda.empty_cache()
-            for b, (Abatch, Hbatch) in enumerate(train_loader(self.wordvecs, self.word_int_dict, train_data, batch_size=p.batch_size)):
+            for b, (Abatch, Hbatch) in enumerate(tqdm(train_loader(p, self.wordvecs, self.word_int_dict, train_data, batch_size=p.batch_size))):    
                 self.model.train()
                 batch_size, sen_len = Hbatch.shape
                 zero_pad = np.array(["" for i in range(Hbatch.shape[0])])
                 zero_pad = np.expand_dims(zero_pad, 1)
                 Hbatch_shifted = np.concatenate([zero_pad, Hbatch[:, :-1]], axis=1)
-                scores = self.model(Abatch.to(device=p.device), Hbatch_shifted)
+                scores = self.model(Abatch, Hbatch_shifted)
                 
                 # Convert highlight words to ints
-                Hbatch_int = torch.zeros(Hbatch.shape, device=self.params.device)
+                Hbatch_int = torch.zeros(Hbatch.shape, dtype=torch.int64, device=p.device)
+
                 for batch in range(Hbatch.shape[0]):
                     Hbatch_int[batch] = words_to_ints(word_int_dict=self.word_int_dict, words=Hbatch[batch])
-                Hbatch = Hbatch_int
                 
                 # Backprop
-                loss = loss_func(scores.view(-1, p.vocab_size), Hbatch.view(-1).type(torch.LongTensor).to(device=self.params.device))
-                train_losses[epoch-1] = loss
+                loss = loss_func(scores.view(-1, p.vocab_size), Hbatch_int.view(-1))
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                train_losses[epoch-1] = loss.detach().item()
                 
                 # Validate
                 if epoch % val_every == 0 and b == 0:
