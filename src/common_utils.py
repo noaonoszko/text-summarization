@@ -128,3 +128,17 @@ def train_loader(p, wordvecs, word_int_dict, train_set, batch_size=5, emb_size=5
             article_emb_all[i, : len(article_emb), :] = article_emb
             highlights_words_all[i, : len(highlights_words)] = highlights_words
         yield (article_emb_all, highlights_words_all)
+
+def train_loader_rl(param, train_set):
+    train_set.shuffle()
+    n_batches = int(len(train_set)/param.batch_size) + 1
+    for b in range(n_batches):
+        # Prepare batches
+        actual_batch_size = param.batch_size if b < n_batches - 1 else len(train_set)-b*param.batch_size # last batch is sometimes smaller
+        highlights = np.empty(param.batch_size, dtype=object)
+        sentences = np.empty((param.batch_size, param.n_sent), dtype=object)
+        for i in range(actual_batch_size):
+            sents = nltk.tokenize.sent_tokenize(train_set[param.batch_size*b+i]["article"])
+            sentences[i, :len(sents[:param.n_sent])] = sents[:param.n_sent]
+            highlights[i] = train_set[param.batch_size*b+i]["highlights"]
+        yield sentences, highlights

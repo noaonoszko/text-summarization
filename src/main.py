@@ -15,6 +15,7 @@ from rouge_score import rouge_scorer
 import torch
 
 from translator_summarizer import *
+from rl_summarizer import *
 from common_utils import *
 
 # Required download for tokenization
@@ -27,14 +28,13 @@ val_set = dataset["validation"]
 test_set = dataset["test"]
 
 # Load glove
-p = SummarizerParameters()
+param = SummarizerParameters()
 # glove_path = str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
 glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
 glove = glove.Glove(
     glove_dir=glove_path
 )
-wordvecs = glove.load_glove(p.emb_dim, vocab_size=p.vocab_size)
-# wordvecs = glove.load_glove(p.emb_dim, vocab_size=1)
+wordvecs = glove.load_glove(param.word_emb_dim, vocab_size=param.vocab_size)
 print("Done loading glove")
 word_int_dict = {}
 for w, word in enumerate(wordvecs):
@@ -58,13 +58,13 @@ parser.add_argument(
     "--val_every",
     help="Validation frequency",
     type=int,
-    default=50,
+    default=1,
 )
 parser.add_argument(
     "--generate_every",
     help="How often to generate a sentence",
     type=int,
-    default=50,
+    default=10,
 )
 args = parser.parse_args()
 
@@ -75,9 +75,13 @@ n_val = int(n_train/10)
 train_subset = train_set.select(range(n_train))
 val_subset = val_set.select(range(n_val))
 
-# Train and validate the translator summarizer
-summarizer = Summarizer(p, wordvecs=wordvecs, word_int_dict=word_int_dict)
+# Train and validate the RL summarizer
+summarizer = Summarizer(param)
 summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
+
+# Train and validate the translator summarizer
+# summarizer = Summarizer(param, wordvecs=wordvecs, word_int_dict=word_int_dict)
+# summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
 
 
 # # Evaluate the baseline
