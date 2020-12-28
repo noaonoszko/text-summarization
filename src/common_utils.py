@@ -141,8 +141,4 @@ def train_loader_rl(param, train_set):
             sents = nltk.tokenize.sent_tokenize(train_set[param.batch_size*b+i]["article"])
             sentences[i, :len(sents[:param.n_sent])] = sents[:param.n_sent]
             highlights[i] = train_set[param.batch_size*b+i]["highlights"]
-        for d, dd in enumerate(sentences):
-            for s, ss in enumerate(dd):
-                if ss is None:
-                    print("in trainloader:", d, s)
         yield sentences, highlights

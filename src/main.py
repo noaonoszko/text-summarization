@@ -87,20 +87,22 @@ val_subset = val_set.select(range(4*n_val)).filter(lambda example: len(nltk.toke
 val_subset = val_subset.select(range(n_val))
 print("after preprocessing")
 
+# Evaluate the baseline
+rouge_scores = evaluate(
+    data=val_subset, model=lead_3_baseline
+)
+mean_F1 = np.mean(rouge_scores)
+print("Average F1 for LEAD-3:", mean_F1)
+
 # Train and validate the RL summarizer
 summarizer = Summarizer(param)
-summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
+summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every, baseline_rouge_score=mean_F1)
 
 # Train and validate the translator summarizer
 # summarizer = Summarizer(param, wordvecs=wordvecs, word_int_dict=word_int_dict)
 # summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
 
 
-# Evaluate the baseline
-rouge_scores = evaluate(
-    data=val_subset, model=lead_3_baseline
-)
-print("Average F1 for LEAD-3:", np.mean(rouge_scores))
 # rouge_hist(rouge_scores)
 
 # Try out the inverse embedding

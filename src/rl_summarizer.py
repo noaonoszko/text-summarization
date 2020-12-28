@@ -27,7 +27,7 @@ class SummarizerParameters:
     sentences_per_summary = 3
     use_combinations = False
 
-    batch_size = 4
+    batch_size = 16
 
     learning_rate = 1e-2
     weight_decay = 0
@@ -102,9 +102,10 @@ class Summarizer:
         self.param = param
 
     def validate(self, data, generate=False): # should sample from network output instead
-        random_indices = np.random.randint(0, len(data), size=self.param.batch_size)
+        n_datapoints = len(data)
+        random_indices = np.random.randint(0, len(data), size=n_datapoints)
         highlights = data.select(random_indices)["highlights"]
-        sentences = np.empty((self.param.batch_size, self.param.n_sent), dtype=object)
+        sentences = np.empty((n_datapoints, self.param.n_sent), dtype=object)
         for i, dp in enumerate(random_indices):
             sents = nltk.tokenize.sent_tokenize(data[dp.item()]["article"])
             sentences[i, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
@@ -128,7 +129,7 @@ class Summarizer:
                     break
         return loss, rouge_score
 
-    def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50, batch_size=5):
+    def train(self, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50, batch_size=5, baseline_rouge_score=False):
         # Setting a fixed seed for reproducibility.
         torch.manual_seed(self.param.random_seed)
         random.seed(self.param.random_seed)
@@ -140,7 +141,8 @@ class Summarizer:
         )
         
         n_batches = int(len(train_data)/self.param.batch_size) + 1
-        n_plot_points = int(n_epochs * n_batches / val_every)
+        # n_plot_points = int(n_epochs * n_batches / val_every) # plot one point per val_every examples
+        n_plot_points = n_epochs
         train_losses = torch.zeros(n_plot_points, requires_grad=False)
         val_losses = torch.zeros(n_plot_points, requires_grad=False)
         val_rouge_scores = torch.zeros(n_plot_points, requires_grad=False)
@@ -150,34 +152,50 @@ class Summarizer:
                 eps = self.param.eps_min
             else:
                 eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
+            mean_loss = 0
             for b, (sentences, highlights) in enumerate(tqdm(train_loader_rl(self.param, train_data))):
                 loss, _, _ = self.forward_prop(sentences, highlights, eps=eps, use_combinations=self.param.use_combinations)
-                
+                mean_loss += loss/sentences.shape[0]
+
                 # Backprop
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                train_losses[n_batches*(epoch-1)+b] = loss
+                # train_losses[n_batches*(epoch-1)+b] = loss
+                
+                # Add mean loss over batches to the list if we're at the last batch
+                if b == n_batches-1:
+                    train_losses[epoch-1] = mean_loss
 
                 # Validate
                 if sentences.shape[0] == self.param.batch_size:
                     examples_seen = (epoch-1) * len(train_data) + (b+1)*self.param.batch_size
                 else:
                     examples_seen = epoch * len(train_data)
-                if examples_seen % val_every == 0:
+                # if examples_seen % val_every == 0:
+                if epoch % val_every == 0 and b == n_batches-1:
                     generate = True if examples_seen % generate_every == 0 or (epoch == n_epochs and b == n_batches - 1) else False
                     val_loss, val_rouge_score = self.validate(val_data, generate)
-                    val_losses[n_batches*(epoch-1)+b] = val_loss
-                    val_rouge_scores[n_batches*(epoch-1)+b] = val_rouge_score
+                    
+                    # val_losses[n_batches*(epoch-1)+b] = val_loss
+                    # val_rouge_scores[n_batches*(epoch-1)+b] = val_rouge_score
+                    val_losses[epoch-1] = val_loss
+                    val_rouge_scores[epoch-1] = val_rouge_score
 
                     # Save loss plot
                     examples = np.linspace(1, n_epochs*len(train_data), n_plot_points)
-                    plt.plot(examples, train_losses.detach(), label="train_loss", color="blue")
-                    plt.plot(examples, val_losses.detach(), label="val_loss", color="red")
+                    # plt.scatter(examples, train_losses.detach(), label="train_loss", color="blue", s=0.2)
+                    # plt.scatter(examples, val_losses.detach(), label="val_loss", color="red", s=0.2)
+                    plt.plot(range(n_epochs), train_losses.detach(), label="train_loss", color="blue")
+                    plt.plot(range(n_epochs), val_losses.detach(), label="val_loss", color="red")
                     plt.legend()
                     plt.savefig("loss.png")
                     plt.clf()
-                    plt.plot(examples, val_rouge_scores)
+                    # plt.plot(examples, val_rouge_scores)
+                    plt.plot(range(n_epochs), val_rouge_scores, label="Average rouge F1 model")
+                    if baseline_rouge_score:
+                        plt.plot(range(n_epochs), baseline_rouge_score*np.ones(n_epochs), color="purple", label="Average rouge F1 LEAD-3")
+                    plt.legend()
                     plt.savefig("rouge_scores.png")
                     plt.clf()
                     t.set_postfix(
@@ -185,10 +203,6 @@ class Summarizer:
                     )
 
     def forward_prop(self, sentences, highlights, eps, use_combinations=True):
-        for d, dd in enumerate(sentences):
-            for s, ss in enumerate(dd):
-                if ss is None:
-                    print(d, s)
         n_datapoints = sentences.shape[0]
         
         # Feed forward
@@ -220,7 +234,6 @@ class Summarizer:
                     except TypeError:
                         print("TypeError occured due to a sentence being None")
                         exit()
-                        continue
                     scores[dp] /= torch.sum(scores[dp].type(torch.float64)) # normalize
                     if torch.rand(1).item() < eps:
                         chosen_summary_idx = torch.multinomial(scores[dp], 1)[0].item()
@@ -243,7 +256,6 @@ class Summarizer:
                 except TypeError:
                     print("TypeError occured due to a sentence being None")
                     exit()
-                    continue
             rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
         loss = -torch.dot(rewards, torch.sum(outputs, dim=1)) / n_datapoints # expected_gradient loss
         return loss, outputs, chosen_summaries
