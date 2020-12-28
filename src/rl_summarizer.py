@@ -110,7 +110,7 @@ class Summarizer:
             sents = nltk.tokenize.sent_tokenize(data[dp.item()]["article"])
             sentences[i, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
         loss, outputs, chosen_summaries = self.forward_prop(sentences, highlights, eps=1, use_combinations=False)
-        
+        loss *= 8
         
         # Calculate rouge score
         n_datapoints = sentences.shape[0]
