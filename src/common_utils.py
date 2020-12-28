@@ -135,10 +135,14 @@ def train_loader_rl(param, train_set):
     for b in range(n_batches):
         # Prepare batches
         actual_batch_size = param.batch_size if b < n_batches - 1 else len(train_set)-b*param.batch_size # last batch is sometimes smaller
-        highlights = np.empty(param.batch_size, dtype=object)
-        sentences = np.empty((param.batch_size, param.n_sent), dtype=object)
+        highlights = np.empty(actual_batch_size, dtype=object)
+        sentences = np.empty((actual_batch_size, param.n_sent), dtype=object)
         for i in range(actual_batch_size):
             sents = nltk.tokenize.sent_tokenize(train_set[param.batch_size*b+i]["article"])
             sentences[i, :len(sents[:param.n_sent])] = sents[:param.n_sent]
             highlights[i] = train_set[param.batch_size*b+i]["highlights"]
+        for d, dd in enumerate(sentences):
+            for s, ss in enumerate(dd):
+                if ss is None:
+                    print("in trainloader:", d, s)
         yield sentences, highlights

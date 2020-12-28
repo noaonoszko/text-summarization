@@ -25,8 +25,9 @@ class SummarizerParameters:
     n_sent = 40
     p = 5
     sentences_per_summary = 3
+    use_combinations = False
 
-    batch_size = 16
+    batch_size = 4
 
     learning_rate = 1e-2
     weight_decay = 0
@@ -46,10 +47,12 @@ class SentenceExtractor(nn.Module):
         self.sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
         self.conv = nn.Conv2d(in_channels=1, out_channels=param.conv_channels, kernel_size=param.conv_kernel_size)
         self.max_pool = nn.MaxPool2d(kernel_size=param.max_pool_kernel_size)
+        self.conv_dropout = nn.Dropout(p=0.5)
         output_layer_input_size = int(self.param.conv_channels * 
             np.floor(((self.param.n_sent-self.param.conv_kernel_size[0]+1)-self.param.max_pool_kernel_size[0])/self.param.max_pool_kernel_size[0]+1) * 
             np.floor(((self.param.sent_emb_dim-self.param.conv_kernel_size[1]+1)-self.param.max_pool_kernel_size[1])/self.param.max_pool_kernel_size[1]+1)
             )
+        self.output_dropout = nn.Dropout(p=0.5)
         self.output_layer = nn.Linear(output_layer_input_size, param.n_sent)
 
     def reward(self, sentence):
@@ -65,10 +68,12 @@ class SentenceExtractor(nn.Module):
                 else:
                     sentence_embeddings[dp, s] = torch.zeros(self.param.sent_emb_dim, device=self.param.device)
         x = torch.unsqueeze(sentence_embeddings, dim=1)
+        x = self.conv_dropout(x)
         x = self.conv(x)
         x = self.max_pool(x)
         x = F.relu(x)
         x = torch.flatten(x, start_dim=1)
+        x = self.output_dropout(x)
         x = self.output_layer(x)
         x = F.log_softmax(x, dim=1)
         return x
@@ -97,51 +102,28 @@ class Summarizer:
         self.param = param
 
     def validate(self, data, generate=False): # should sample from network output instead
-        highlights = [data[dp]["highlights"] for dp in range(len(data))]
-        sentences = np.empty((len(data), self.param.n_sent), dtype=object)
-        for dp in range(len(data)):
-            sents = nltk.tokenize.sent_tokenize(data[dp]["article"])
-            sentences[dp, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
-        loss, outputs = self.forward_prop(sentences, highlights, 1)
+        random_indices = np.random.randint(0, len(data), size=self.param.batch_size)
+        highlights = data.select(random_indices)["highlights"]
+        sentences = np.empty((self.param.batch_size, self.param.n_sent), dtype=object)
+        for i, dp in enumerate(random_indices):
+            sents = nltk.tokenize.sent_tokenize(data[dp.item()]["article"])
+            sentences[i, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
+        loss, outputs, chosen_summaries = self.forward_prop(sentences, highlights, eps=1, use_combinations=False)
         
         
-        
-        # Check combinations
+        # Calculate rouge score
         n_datapoints = sentences.shape[0]
-        best_p_sentences_idx = torch.topk(outputs, k=self.param.p, dim=1).indices
-        best_p_sentences_values = torch.topk(outputs, k=self.param.p, dim=1).values
-        n_combinations = int(comb(self.param.p, self.param.sentences_per_summary))
-        scores = torch.zeros((n_datapoints, n_combinations), device=self.param.device)
-        chosen_summaries = np.empty(n_datapoints, dtype=object)
-        rewards = torch.zeros(n_datapoints, device=self.param.device)
         rouge_score = 0
         for dp, datapoint in enumerate(sentences):
-            combinations = torch.combinations(best_p_sentences_idx[dp], self.param.sentences_per_summary)
-            for c, combination in enumerate(combinations):
-                try:
-                    summary = ""
-                    for sentence_idx in combination:
-                        summary += " "+sentences[dp, sentence_idx]
-                    scores[dp, c] = self.model.rouge_score(summary, highlights[dp])
-                except TypeError:
-                    continue
-                scores[dp] /= torch.sum(scores[dp].type(torch.float64)) # normalize
-                chosen_summary_idx = torch.argmax(scores[dp]).item()
-                chosen_summaries[dp] = ""
-                for c, sentence_idx in enumerate(combinations[chosen_summary_idx]):
-                    if c == 0:
-                        chosen_summaries[dp] += sentences[dp, sentence_idx] 
-                    else:
-                        chosen_summaries[dp] += " "+sentences[dp, sentence_idx] 
             if chosen_summaries[dp] is not None:
                 rouge_score += self.model.rouge_score(chosen_summaries[dp], highlights[dp]) / n_datapoints
 
         if generate:
             for dp in range(len(data)):
-                print("----------------------------output----------------------------")
-                print(chosen_summaries[dp])
-                print("\n----------------------------target----------------------------")
-                print(highlights[dp])
+                # print("----------------------------output----------------------------")
+                # print(chosen_summaries[dp])
+                # print("\n----------------------------target----------------------------")
+                # print(highlights[dp])
                 if dp == 0:
                     break
         return loss, rouge_score
@@ -156,42 +138,57 @@ class Summarizer:
         optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.param.learning_rate, weight_decay=self.param.weight_decay
         )
-
-        train_losses = torch.zeros(n_epochs, requires_grad=False)
-        val_losses = torch.zeros(n_epochs, requires_grad=False)
-        val_rouge_scores = torch.zeros(n_epochs, requires_grad=False)
+        
+        n_batches = int(len(train_data)/self.param.batch_size) + 1
+        n_plot_points = int(n_epochs * n_batches / val_every)
+        train_losses = torch.zeros(n_plot_points, requires_grad=False)
+        val_losses = torch.zeros(n_plot_points, requires_grad=False)
+        val_rouge_scores = torch.zeros(n_plot_points, requires_grad=False)
         t = trange(1, n_epochs + 1)
         for epoch in t:
-            eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
-            for b, (sentences, highlights) in enumerate(train_loader_rl(self.param, train_data)):
-                loss, _ = self.forward_prop(sentences, highlights, eps)
+            if n_epochs == 1:
+                eps = self.param.eps_min
+            else:
+                eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
+            for b, (sentences, highlights) in enumerate(tqdm(train_loader_rl(self.param, train_data))):
+                loss, _, _ = self.forward_prop(sentences, highlights, eps=eps, use_combinations=self.param.use_combinations)
                 
                 # Backprop
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                train_losses[epoch-1] = loss
+                train_losses[n_batches*(epoch-1)+b] = loss
 
                 # Validate
-                if epoch % val_every == 0 and b == 0:
-                    generate = True if epoch % generate_every == 0 or epoch == n_epochs else False
+                if sentences.shape[0] == self.param.batch_size:
+                    examples_seen = (epoch-1) * len(train_data) + (b+1)*self.param.batch_size
+                else:
+                    examples_seen = epoch * len(train_data)
+                if examples_seen % val_every == 0:
+                    generate = True if examples_seen % generate_every == 0 or (epoch == n_epochs and b == n_batches - 1) else False
                     val_loss, val_rouge_score = self.validate(val_data, generate)
-                    val_losses[epoch-1] = val_loss
-                    val_rouge_scores[epoch-1] = val_rouge_score
-                    
+                    val_losses[n_batches*(epoch-1)+b] = val_loss
+                    val_rouge_scores[n_batches*(epoch-1)+b] = val_rouge_score
+
                     # Save loss plot
-                    plt.plot(train_losses.detach())
-                    plt.plot(val_losses.detach())
-                    plt.legend(["train_loss", "val_loss"])
+                    examples = np.linspace(1, n_epochs*len(train_data), n_plot_points)
+                    plt.plot(examples, train_losses.detach(), label="train_loss", color="blue")
+                    plt.plot(examples, val_losses.detach(), label="val_loss", color="red")
+                    plt.legend()
                     plt.savefig("loss.png")
                     plt.clf()
-                    plt.plot(val_rouge_scores)
+                    plt.plot(examples, val_rouge_scores)
                     plt.savefig("rouge_scores.png")
+                    plt.clf()
                     t.set_postfix(
                         loss=loss.item(), val_loss=val_loss.item(), val_rouge_score=val_rouge_score
                     )
 
-    def forward_prop(self, sentences, highlights, eps):
+    def forward_prop(self, sentences, highlights, eps, use_combinations=True):
+        for d, dd in enumerate(sentences):
+            for s, ss in enumerate(dd):
+                if ss is None:
+                    print(d, s)
         n_datapoints = sentences.shape[0]
         
         # Feed forward
@@ -204,34 +201,49 @@ class Summarizer:
                 if sentence is not None:
                     rouge_scores[dp, s] = self.model.rouge_score(sentence, highlights[dp])
 
-        # Calculate scores for combinations of p sentences, sample one and calculate reward
-        best_p_sentences_idx = torch.topk(rouge_scores, k=self.param.p).indices
-        n_combinations = int(comb(self.param.p, self.param.sentences_per_summary))
-        scores = torch.zeros((n_datapoints, n_combinations), device=self.param.device)
         chosen_summaries = np.empty(n_datapoints, dtype=object)
         rewards = torch.zeros(n_datapoints, device=self.param.device)
-        for dp, datapoint in enumerate(sentences):
-            combinations = torch.combinations(best_p_sentences_idx[dp], self.param.sentences_per_summary)
-            for c, combination in enumerate(combinations):
-                try:
-                    summary = ""
-                    for sentence_idx in combination:
-                        summary += " "+sentences[dp, sentence_idx]
-                    scores[dp, c] = self.model.rouge_score(summary, highlights[dp])
-                except TypeError:
-                    continue
-                scores[dp] /= torch.sum(scores[dp].type(torch.float64)) # normalize
-                # Try greedy
-                if torch.rand(1).item() < eps:
-                    chosen_summary_idx = torch.multinomial(scores[dp], 1)[0].item()
-                else:
-                    chosen_summary_idx = torch.argmax(scores[dp]).item()
-                chosen_summaries[dp] = ""
-                for c, sentence_idx in enumerate(combinations[chosen_summary_idx]):
-                    if c == 0:
-                        chosen_summaries[dp] += sentences[dp, sentence_idx] 
+
+        if use_combinations:
+            # Calculate scores for combinations of p sentences, sample one and calculate reward
+            best_p_sentences_idx = torch.topk(outputs, k=self.param.p).indices
+            n_combinations = int(comb(self.param.p, self.param.sentences_per_summary))
+            scores = torch.zeros((n_datapoints, n_combinations), device=self.param.device)
+            for dp, datapoint in enumerate(sentences):
+                combinations = torch.combinations(best_p_sentences_idx[dp], self.param.sentences_per_summary)
+                for c, combination in enumerate(combinations):
+                    try:
+                        summary = ""
+                        for sentence_idx in combination:
+                            summary += " "+sentences[dp, sentence_idx]
+                        scores[dp, c] = 0.00001+self.model.rouge_score(summary, highlights[dp])
+                    except TypeError:
+                        print("TypeError occured due to a sentence being None")
+                        exit()
+                        continue
+                    scores[dp] /= torch.sum(scores[dp].type(torch.float64)) # normalize
+                    if torch.rand(1).item() < eps:
+                        chosen_summary_idx = torch.multinomial(scores[dp], 1)[0].item()
                     else:
-                        chosen_summaries[dp] += " "+sentences[dp, sentence_idx] 
-                rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
+                        chosen_summary_idx = torch.argmax(scores[dp]).item()
+                    chosen_summaries[dp] = ""
+                    for c, sentence_idx in enumerate(combinations[chosen_summary_idx]):
+                        if c == 0:
+                            chosen_summaries[dp] += sentences[dp, sentence_idx] 
+                        else:
+                            chosen_summaries[dp] += " "+sentences[dp, sentence_idx] 
+                    rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
+        else:
+            best_sentences_idx = torch.topk(outputs, k=self.param.sentences_per_summary).indices
+            for dp, datapoint in enumerate(sentences):
+                try:
+                    chosen_summaries[dp] = ""
+                    for sentence_idx in best_sentences_idx[dp]:
+                        chosen_summaries[dp] += " "+sentences[dp, sentence_idx]
+                except TypeError:
+                    print("TypeError occured due to a sentence being None")
+                    exit()
+                    continue
+            rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
         loss = -torch.dot(rewards, torch.sum(outputs, dim=1)) / n_datapoints # expected_gradient loss
-        return loss, outputs
+        return loss, outputs, chosen_summaries

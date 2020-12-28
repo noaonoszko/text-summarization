@@ -21,26 +21,6 @@ from common_utils import *
 # Required download for tokenization
 nltk.download("punkt")
 
-# Load cnn data
-logging.set_verbosity(logging.WARNING)
-dataset = load_dataset("cnn_dailymail", "3.0.0")
-train_set = dataset["train"]
-val_set = dataset["validation"]
-test_set = dataset["test"]
-
-# Load glove
-param = SummarizerParameters()
-# glove_path = str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
-# glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
-# glove = glove.Glove(
-#     glove_dir=glove_path
-# )
-# wordvecs = glove.load_glove(param.word_emb_dim, vocab_size=param.vocab_size)
-# print("Done loading glove")
-# word_int_dict = {}
-# for w, word in enumerate(wordvecs):
-#     word_int_dict[word] = w
-
 # Argparsers
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -67,17 +47,45 @@ parser.add_argument(
     type=int,
     default=10,
 )
+parser.add_argument( #add --use_combinations as a flag to use combinations
+    "--use_combinations",
+    help="Consider combinations of the p best sentences and choose the param.n_sent best ones according to rouge scores.",
+    action="store_true",
+)
 args = parser.parse_args()
+
+# Load cnn data
+logging.set_verbosity(logging.ERROR)
+dataset = load_dataset("cnn_dailymail", "3.0.0")
+train_set = dataset["train"]
+val_set = dataset["validation"]
+test_set = dataset["test"]
+
+# Load glove
+param = SummarizerParameters()
+param.use_combinations = args.use_combinations
+# glove_path = str(Path(__file__).resolve().parents[3]) + "/Assignment 3/data/glove/"
+# glove_path = str(Path(__file__).resolve().parents[2]) + "/glove/"
+# glove = glove.Glove(
+#     glove_dir=glove_path
+# )
+# wordvecs = glove.load_glove(param.word_emb_dim, vocab_size=param.vocab_size)
+# print("Done loading glove")
+# word_int_dict = {}
+# for w, word in enumerate(wordvecs):
+#     word_int_dict[word] = w
 
 
 # Use less training data
+print("before preprocessing")
 n_epochs = args.epochs
 n_train = args.n_train
 n_val = int(n_train/10)
 train_subset = train_set.select(range(4*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
-train_subset = train_set.select(range(n_train))
-val_subset = train_set.select(range(4*n_val)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
-val_subset = train_set.select(range(n_val))
+train_subset = train_subset.select(range(n_train))
+val_subset = val_set.select(range(4*n_val)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+val_subset = val_subset.select(range(n_val))
+print("after preprocessing")
 
 # Train and validate the RL summarizer
 summarizer = Summarizer(param)
