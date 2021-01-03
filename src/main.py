@@ -80,7 +80,8 @@ param.use_combinations = args.use_combinations
 print("before preprocessing")
 n_epochs = args.epochs
 n_train = args.n_train
-n_val = int(n_train/10)
+# n_val = int(n_train/10)
+n_val = 200
 train_subset = train_set.select(range(4*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
 train_subset = train_subset.select(range(n_train))
 val_subset = val_set.select(range(4*n_val)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
@@ -90,7 +91,7 @@ print("after preprocessing")
 # Evaluate the baseline
 rouge_scores = evaluate(
     data=val_subset, model=lead_3_baseline
-)
+)    
 mean_F1 = np.mean(rouge_scores)
 print("Average F1 for LEAD-3:", mean_F1)
 
@@ -101,9 +102,3 @@ summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.va
 # Train and validate the translator summarizer
 # summarizer = Summarizer(param, wordvecs=wordvecs, word_int_dict=word_int_dict)
 # summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every)
-
-
-# rouge_hist(rouge_scores)
-
-# Try out the inverse embedding
-# print(emb_to_word(wordvecs["apple"])

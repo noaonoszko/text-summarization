@@ -18,7 +18,7 @@ from common_utils import *
 class SummarizerParameters:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
-    eps_max = 0.8
+    eps_max = 0.8        
     eps_min = 0.05
     random_seed = 0
     vocab_size = 400000
@@ -28,16 +28,17 @@ class SummarizerParameters:
     use_combinations = False
 
     batch_size = 16
-
-    learning_rate = 1e-2
+    learning_rate = 1e-5
     weight_decay = 0
 
     word_emb_dim = 50
     sent_emb_dim = 768
     
-    conv_channels = 3
+    conv_channels = 10
     conv_kernel_size = (2, 10)
-    max_pool_kernel_size = (5, 50)
+    max_pool_kernel_size = (2, 10)
+    conv_dropout_prob = 0.5
+    linear_dropout_prob = 0.5
 
 
 class SentenceExtractor(nn.Module):
@@ -47,12 +48,12 @@ class SentenceExtractor(nn.Module):
         self.sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
         self.conv = nn.Conv2d(in_channels=1, out_channels=param.conv_channels, kernel_size=param.conv_kernel_size)
         self.max_pool = nn.MaxPool2d(kernel_size=param.max_pool_kernel_size)
-        self.conv_dropout = nn.Dropout(p=0.5)
+        self.conv_dropout = nn.Dropout(p=param.conv_dropout_prob)
         output_layer_input_size = int(self.param.conv_channels * 
             np.floor(((self.param.n_sent-self.param.conv_kernel_size[0]+1)-self.param.max_pool_kernel_size[0])/self.param.max_pool_kernel_size[0]+1) * 
             np.floor(((self.param.sent_emb_dim-self.param.conv_kernel_size[1]+1)-self.param.max_pool_kernel_size[1])/self.param.max_pool_kernel_size[1]+1)
             )
-        self.output_dropout = nn.Dropout(p=0.5)
+        self.output_dropout = nn.Dropout(p=param.linear_dropout_prob)
         self.output_layer = nn.Linear(output_layer_input_size, param.n_sent)
 
     def reward(self, sentence):
@@ -110,7 +111,7 @@ class Summarizer:
             sents = nltk.tokenize.sent_tokenize(data[dp.item()]["article"])
             sentences[i, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
         loss, outputs, chosen_summaries = self.forward_prop(sentences, highlights, eps=1, use_combinations=False)
-        loss *= 8
+        # loss *= 8
         
         # Calculate rouge score
         n_datapoints = sentences.shape[0]
@@ -121,11 +122,11 @@ class Summarizer:
 
         if generate:
             for dp in range(len(data)):
-                # print("----------------------------output----------------------------")
-                # print(chosen_summaries[dp])
-                # print("\n----------------------------target----------------------------")
-                # print(highlights[dp])
-                if dp == 0:
+                print("----------------------------output----------------------------")
+                print(chosen_summaries[dp])
+                print("\n----------------------------target----------------------------")
+                print(highlights[dp])
+                if dp == 5:
                     break
         return loss, rouge_score
 
@@ -153,7 +154,7 @@ class Summarizer:
             else:
                 eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
             mean_loss = 0
-            for b, (sentences, highlights) in enumerate(tqdm(train_loader_rl(self.param, train_data))):
+            for b, (sentences, highlights) in enumerate(train_loader_rl(self.param, train_data)):
                 loss, _, _ = self.forward_prop(sentences, highlights, eps=eps, use_combinations=self.param.use_combinations)
                 mean_loss += loss/sentences.shape[0]
 
@@ -186,8 +187,8 @@ class Summarizer:
                     examples = np.linspace(1, n_epochs*len(train_data), n_plot_points)
                     # plt.scatter(examples, train_losses.detach(), label="train_loss", color="blue", s=0.2)
                     # plt.scatter(examples, val_losses.detach(), label="val_loss", color="red", s=0.2)
-                    plt.plot(range(n_epochs), train_losses.detach(), label="train_loss", color="blue")
-                    plt.plot(range(n_epochs), val_losses.detach(), label="val_loss", color="red")
+                    plt.plot(range(n_epochs), train_losses.detach(), label="train_loss", color="blue", linewidth=0.5)
+                    plt.plot(range(n_epochs), val_losses.detach(), label="val_loss", color="red", linewidth=0.5)
                     plt.legend()
                     plt.savefig("loss.png")
                     plt.clf()
@@ -199,7 +200,7 @@ class Summarizer:
                     plt.savefig("rouge_scores.png")
                     plt.clf()
                     t.set_postfix(
-                        loss=loss.item(), val_loss=val_loss.item(), val_rouge_score=val_rouge_score
+                        loss=mean_loss.item(), val_loss=val_loss.item(), val_rouge_score=val_rouge_score
                     )
 
     def forward_prop(self, sentences, highlights, eps, use_combinations=True):

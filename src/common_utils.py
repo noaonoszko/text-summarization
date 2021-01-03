@@ -29,14 +29,13 @@ def evaluate(data, model):
     rouge_scores = np.zeros((len(data), 3))
     for t, text in enumerate(tqdm(data)):
         tokens = model(text)
-
         scorer = rouge_scorer.RougeScorer(
             ["rouge1", "rouge2", "rougeL"], use_stemmer=True
         )
 
         scores = scorer.score(
             text["highlights"],
-            tokens[0],
+            " ".join(tokens),
         )
         rouge_scores[t] = np.array(
             [scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2]]
