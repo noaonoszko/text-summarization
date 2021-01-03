@@ -27,37 +27,25 @@ class SummarizerParameters:
     sentences_per_summary = 3
     use_combinations = False
 
-    batch_size = 16
+    batch_size = 2
     learning_rate = 1e-5
     weight_decay = 0
 
     word_emb_dim = 50
     sent_emb_dim = 768
     
-    conv_channels = 10
-    conv_kernel_size = (2, 10)
-    max_pool_kernel_size = (2, 10)
-    conv_dropout_prob = 0.5
-    linear_dropout_prob = 0.5
+    # Sentence extractor
+    sent_ext_hidden_size = 5
+    sent_ext_num_layers = 5
+    sent_ext_dropout_prob = 0.5
 
 
-class SentenceExtractor(nn.Module):
+
+class SentenceEncoder(nn.Module):
     def __init__(self, param):
         super().__init__()
         self.param = param
         self.sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
-        self.conv = nn.Conv2d(in_channels=1, out_channels=param.conv_channels, kernel_size=param.conv_kernel_size)
-        self.max_pool = nn.MaxPool2d(kernel_size=param.max_pool_kernel_size)
-        self.conv_dropout = nn.Dropout(p=param.conv_dropout_prob)
-        output_layer_input_size = int(self.param.conv_channels * 
-            np.floor(((self.param.n_sent-self.param.conv_kernel_size[0]+1)-self.param.max_pool_kernel_size[0])/self.param.max_pool_kernel_size[0]+1) * 
-            np.floor(((self.param.sent_emb_dim-self.param.conv_kernel_size[1]+1)-self.param.max_pool_kernel_size[1])/self.param.max_pool_kernel_size[1]+1)
-            )
-        self.output_dropout = nn.Dropout(p=param.linear_dropout_prob)
-        self.output_layer = nn.Linear(output_layer_input_size, param.n_sent)
-
-    def reward(self, sentence):
-        pass
 
     def forward(self, sentences):
         n_batches, n_sentences = sentences.shape
@@ -68,16 +56,37 @@ class SentenceExtractor(nn.Module):
                     sentence_embeddings[dp, s] = torch.tensor(self.sbert_model.encode(sentence), device=self.param.device)
                 else:
                     sentence_embeddings[dp, s] = torch.zeros(self.param.sent_emb_dim, device=self.param.device)
-        x = torch.unsqueeze(sentence_embeddings, dim=1)
-        x = self.conv_dropout(x)
-        x = self.conv(x)
-        x = self.max_pool(x)
-        x = F.relu(x)
-        x = torch.flatten(x, start_dim=1)
-        x = self.output_dropout(x)
-        x = self.output_layer(x)
-        x = F.log_softmax(x, dim=1)
+        # x = torch.unsqueeze(sentence_embeddings, dim=1)
+        x = sentence_embeddings
         return x
+
+class DocumentEncoder(nn.Module):
+    def __init__(self, param):
+            super().__init__()
+            self.param = param
+            # TODO
+
+    def forward(self, sentences):
+        pass
+        # TODO
+        
+
+class SentenceExtractor(nn.Module):
+    def __init__(self, param, sent_encoder, doc_encoder):
+            super().__init__()
+            self.param = param
+            self.sent_encoder = sent_encoder
+            self.doc_encoder = doc_encoder
+            self.lstm = nn.LSTM(input_size=param.sent_emb_dim, hidden_size=param.sent_ext_hidden_size, num_layers=param.sent_ext_num_layers, batch_first=True, dropout=param.sent_ext_dropout_prob)
+
+    def forward(self, sentences):
+        # TODO: Feed sentences in reverse order
+        x = self.sent_encoder(sentences)
+        return self.lstm(x)
+
+class Summarizer:
+    def __init__(self, param):
+        self.param = param
 
     def rouge_score(self, text, highlights):
         """
@@ -97,11 +106,7 @@ class SentenceExtractor(nn.Module):
             [scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2]]
         )
         return rouge_mean
-
-class Summarizer:
-    def __init__(self, param):
-        self.param = param
-
+        
     def validate(self, data, generate=False): # should sample from network output instead
         n_datapoints = len(data)
         random_indices = np.random.randint(0, len(data), size=n_datapoints)
@@ -118,7 +123,7 @@ class Summarizer:
         rouge_score = 0
         for dp, datapoint in enumerate(sentences):
             if chosen_summaries[dp] is not None:
-                rouge_score += self.model.rouge_score(chosen_summaries[dp], highlights[dp]) / n_datapoints
+                rouge_score += self.rouge_score(chosen_summaries[dp], highlights[dp]) / n_datapoints
 
         if generate:
             for dp in range(len(data)):
@@ -135,7 +140,9 @@ class Summarizer:
         torch.manual_seed(self.param.random_seed)
         random.seed(self.param.random_seed)
 
-        self.model = SentenceExtractor(self.param).to(self.param.device)
+        sent_encoder = SentenceEncoder(self.param)
+        doc_encoder = DocumentEncoder(self.param)
+        self.model = SentenceExtractor(self.param, sent_encoder, doc_encoder).to(self.param.device)
         self.model.train()
         optimizer = torch.optim.Adam(
             self.model.parameters(), lr=self.param.learning_rate, weight_decay=self.param.weight_decay
@@ -155,6 +162,8 @@ class Summarizer:
                 eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
             mean_loss = 0
             for b, (sentences, highlights) in enumerate(train_loader_rl(self.param, train_data)):
+                print(self.model(sentences))
+                exit()
                 loss, _, _ = self.forward_prop(sentences, highlights, eps=eps, use_combinations=self.param.use_combinations)
                 mean_loss += loss/sentences.shape[0]
 
@@ -214,7 +223,7 @@ class Summarizer:
         for dp, datapoint in enumerate(sentences):
             for s, sentence in enumerate(datapoint):
                 if sentence is not None:
-                    rouge_scores[dp, s] = self.model.rouge_score(sentence, highlights[dp])
+                    rouge_scores[dp, s] = self.rouge_score(sentence, highlights[dp])
 
         chosen_summaries = np.empty(n_datapoints, dtype=object)
         rewards = torch.zeros(n_datapoints, device=self.param.device)
@@ -231,7 +240,7 @@ class Summarizer:
                         summary = ""
                         for sentence_idx in combination:
                             summary += " "+sentences[dp, sentence_idx]
-                        scores[dp, c] = 0.00001+self.model.rouge_score(summary, highlights[dp])
+                        scores[dp, c] = 0.00001+self.rouge_score(summary, highlights[dp])
                     except TypeError:
                         print("TypeError occured due to a sentence being None")
                         exit()
@@ -246,7 +255,7 @@ class Summarizer:
                             chosen_summaries[dp] += sentences[dp, sentence_idx] 
                         else:
                             chosen_summaries[dp] += " "+sentences[dp, sentence_idx] 
-                    rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
+                    rewards[dp] = self.rouge_score(chosen_summaries[dp], highlights[dp])
         else:
             best_sentences_idx = torch.topk(outputs, k=self.param.sentences_per_summary).indices
             for dp, datapoint in enumerate(sentences):
@@ -257,6 +266,6 @@ class Summarizer:
                 except TypeError:
                     print("TypeError occured due to a sentence being None")
                     exit()
-            rewards[dp] = self.model.rouge_score(chosen_summaries[dp], highlights[dp])
+            rewards[dp] = self.rouge_score(chosen_summaries[dp], highlights[dp])
         loss = -torch.dot(rewards, torch.sum(outputs, dim=1)) / n_datapoints # expected_gradient loss
         return loss, outputs, chosen_summaries
