@@ -80,8 +80,7 @@ param.use_combinations = args.use_combinations
 print("before preprocessing")
 n_epochs = args.epochs
 n_train = args.n_train
-# n_val = int(n_train/10)
-n_val = 200
+n_val = 201
 train_subset = train_set.select(range(4*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
 train_subset = train_subset.select(range(n_train))
 val_subset = val_set.select(range(4*n_val)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)

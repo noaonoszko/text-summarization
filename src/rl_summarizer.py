@@ -17,28 +17,27 @@ from common_utils import *
 
 class SummarizerParameters:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    random_seed = 0
     
     eps_max = 0.8        
     eps_min = 0.05
-    random_seed = 0
-    vocab_size = 400000
+    sent_emb_dim = 768
     n_sent = 40
-    p = 5
     sentences_per_summary = 3
     use_combinations = False
+    p = 5
 
-    batch_size = 2
-    learning_rate = 1e-5
-    weight_decay = 0
+    batch_size = 20
+    learning_rate = 1e-3
 
-    word_emb_dim = 50
-    sent_emb_dim = 768
     
     # Sentence extractor
-    sent_ext_hidden_size = 5
-    sent_ext_num_layers = 5
-    sent_ext_dropout_prob = 0.5
+    sent_ext_hidden_size = 600
+    sent_ext_num_layers = 1
 
+    # Document encoder
+    doc_enc_hidden_size = 600
+    doc_enc_num_layers = 1
 
 
 class SentenceEncoder(nn.Module):
@@ -56,33 +55,40 @@ class SentenceEncoder(nn.Module):
                     sentence_embeddings[dp, s] = torch.tensor(self.sbert_model.encode(sentence), device=self.param.device)
                 else:
                     sentence_embeddings[dp, s] = torch.zeros(self.param.sent_emb_dim, device=self.param.device)
-        # x = torch.unsqueeze(sentence_embeddings, dim=1)
-        x = sentence_embeddings
-        return x
+        return sentence_embeddings
 
 class DocumentEncoder(nn.Module):
     def __init__(self, param):
             super().__init__()
             self.param = param
-            # TODO
+            self.lstm = nn.LSTM(input_size=param.sent_emb_dim, hidden_size=param.doc_enc_hidden_size, num_layers=param.doc_enc_num_layers, batch_first=True)
 
-    def forward(self, sentences):
-        pass
-        # TODO
+    def forward(self, sent_embs):
+        _, (h_n, _) = self.lstm(sent_embs)
         
 
 class SentenceExtractor(nn.Module):
     def __init__(self, param, sent_encoder, doc_encoder):
-            super().__init__()
-            self.param = param
-            self.sent_encoder = sent_encoder
-            self.doc_encoder = doc_encoder
-            self.lstm = nn.LSTM(input_size=param.sent_emb_dim, hidden_size=param.sent_ext_hidden_size, num_layers=param.sent_ext_num_layers, batch_first=True, dropout=param.sent_ext_dropout_prob)
+        super().__init__()
+        self.param = param
+        self.sent_encoder = sent_encoder
+        self.doc_encoder = doc_encoder
+        self.lstm = nn.LSTM(input_size=param.sent_emb_dim, hidden_size=param.sent_ext_hidden_size, num_layers=param.sent_ext_num_layers, batch_first=True)
+        self.ll_size = param.n_sent * param.sent_ext_hidden_size 
+        self.ll = nn.Linear(self.ll_size, param.n_sent)
 
     def forward(self, sentences):
         # TODO: Feed sentences in reverse order
-        x = self.sent_encoder(sentences)
-        return self.lstm(x)
+        batch_size, _ = sentences.shape
+        sent_embs = self.sent_encoder(sentences)
+        doc_enc = self.doc_encoder(sent_embs)
+
+        h_t, _ = self.lstm(sent_embs, doc_enc)
+        h_t = h_t.contiguous().view(batch_size, self.ll_size)
+        
+        out = self.ll(h_t)
+        out = F.log_softmax(out, dim=1)
+        return out
 
 class Summarizer:
     def __init__(self, param):
@@ -116,7 +122,6 @@ class Summarizer:
             sents = nltk.tokenize.sent_tokenize(data[dp.item()]["article"])
             sentences[i, :len(sents[:self.param.n_sent])] = sents[:self.param.n_sent]
         loss, outputs, chosen_summaries = self.forward_prop(sentences, highlights, eps=1, use_combinations=False)
-        # loss *= 8
         
         # Calculate rouge score
         n_datapoints = sentences.shape[0]
@@ -145,7 +150,7 @@ class Summarizer:
         self.model = SentenceExtractor(self.param, sent_encoder, doc_encoder).to(self.param.device)
         self.model.train()
         optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.param.learning_rate, weight_decay=self.param.weight_decay
+            self.model.parameters(), lr=self.param.learning_rate
         )
         
         n_batches = int(len(train_data)/self.param.batch_size) + 1
@@ -162,8 +167,6 @@ class Summarizer:
                 eps = self.param.eps_max-(self.param.eps_max-self.param.eps_min)*(epoch-1)/(n_epochs-1)
             mean_loss = 0
             for b, (sentences, highlights) in enumerate(train_loader_rl(self.param, train_data)):
-                print(self.model(sentences))
-                exit()
                 loss, _, _ = self.forward_prop(sentences, highlights, eps=eps, use_combinations=self.param.use_combinations)
                 mean_loss += loss/sentences.shape[0]
 
@@ -267,5 +270,8 @@ class Summarizer:
                     print("TypeError occured due to a sentence being None")
                     exit()
             rewards[dp] = self.rouge_score(chosen_summaries[dp], highlights[dp])
-        loss = -torch.dot(rewards, torch.sum(outputs, dim=1)) / n_datapoints # expected_gradient loss
+        chosen_outputs = torch.zeros(n_datapoints, self.param.sentences_per_summary, device=self.param.device)
+        for dp, datapoint in enumerate(sentences):
+           chosen_outputs[dp] = outputs[dp, best_sentences_idx[dp]]
+        loss = -torch.dot(rewards, torch.sum(chosen_outputs, dim=1)) / n_datapoints # expected_gradient loss
         return loss, outputs, chosen_summaries
