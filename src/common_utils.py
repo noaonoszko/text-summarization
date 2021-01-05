@@ -29,14 +29,13 @@ def evaluate(data, model):
     rouge_scores = np.zeros((len(data), 3))
     for t, text in enumerate(tqdm(data)):
         tokens = model(text)
-
         scorer = rouge_scorer.RougeScorer(
             ["rouge1", "rouge2", "rougeL"], use_stemmer=True
         )
 
         scores = scorer.score(
             text["highlights"],
-            tokens[0],
+            " ".join(tokens),
         )
         rouge_scores[t] = np.array(
             [scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2]]
@@ -66,7 +65,7 @@ def cos_sim(x, y):
     return np.dot(x, y) / (np.linalg.norm(x) * np.linalg.norm(y))
 
 
-def words_to_embs(wordvecs, words):
+def words_to_embs(device, wordvecs, words):
     """
     Returns the embedding of
     """
@@ -78,7 +77,7 @@ def words_to_embs(wordvecs, words):
                 wordvecs[word] if word in wordvecs else np.zeros(wordvecs["the"].shape[0])
                 for word in words
             ],
-            dtype=torch.float32,
+            dtype=torch.float32, device=device
         )
 def words_to_ints(word_int_dict, words):
     return torch.tensor([word_int_dict[word] if word in word_int_dict else 0 for word in words]) # else 0, needs to be addressed!
@@ -97,7 +96,7 @@ def emb_to_word(emb):
     return most_similar_word, max_cosine_similarity
 
 
-def train_loader(wordvecs, word_int_dict, train_set, batch_size=5, emb_size=50):
+def train_loader(p, wordvecs, word_int_dict, train_set, batch_size=5, emb_size=50):
     n_batches = int(len(train_set)/batch_size) + 1
     for b in range(n_batches):
         # Calculate max length of articles and highlights in batch
@@ -118,13 +117,27 @@ def train_loader(wordvecs, word_int_dict, train_set, batch_size=5, emb_size=50):
         
         # Prepare batches
         actual_batch_size = batch_size if b < n_batches - 1 else len(train_set)-b*batch_size # last batch is sometimes smaller
-        article_emb_all = torch.zeros((actual_batch_size, max_article_len, emb_size))
+        article_emb_all = torch.zeros((actual_batch_size, max_article_len, emb_size), device=p.device)
         highlights_words_all = np.empty((actual_batch_size, max_highlights_len), dtype=object)
         for i in range(actual_batch_size):
-            article_emb = words_to_embs(
+            article_emb = words_to_embs(p.device,
                 wordvecs, nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["article"])
             )
             highlights_words = np.array(nltk.tokenize.word_tokenize(train_set[batch_size*b+i]["highlights"]))
             article_emb_all[i, : len(article_emb), :] = article_emb
             highlights_words_all[i, : len(highlights_words)] = highlights_words
         yield (article_emb_all, highlights_words_all)
+
+def train_loader_rl(param, train_set):
+    train_set.shuffle()
+    n_batches = int(len(train_set)/param.batch_size) + 1
+    for b in range(n_batches):
+        # Prepare batches
+        actual_batch_size = param.batch_size if b < n_batches - 1 else len(train_set)-b*param.batch_size # last batch is sometimes smaller
+        highlights = np.empty(actual_batch_size, dtype=object)
+        sentences = np.empty((actual_batch_size, param.n_sent), dtype=object)
+        for i in range(actual_batch_size):
+            sents = nltk.tokenize.sent_tokenize(train_set[param.batch_size*b+i]["article"])
+            sentences[i, :len(sents[:param.n_sent])] = sents[:param.n_sent]
+            highlights[i] = train_set[param.batch_size*b+i]["highlights"]
+        yield sentences, highlights
