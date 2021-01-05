@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import glove
 import nltk
 from rouge_score import rouge_scorer
+from sentence_transformers import SentenceTransformer
 import torch
 
 from translator_summarizer import *
@@ -77,15 +78,31 @@ param.use_combinations = args.use_combinations
 
 
 # Use less training data
-print("before preprocessing")
+print("Creating subsets")
 n_epochs = args.epochs
 n_train = args.n_train
-n_val = 201
-train_subset = train_set.select(range(4*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
-train_subset = train_subset.select(range(n_train))
-val_subset = val_set.select(range(4*n_val)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+n_val = n_train
+print(len(val_set))
+from copy import *
+print("n_sent= ", param.n_sent)
+val_subset = val_setfilter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+# train_subset = train_set.select(range(200*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+train_subset = train_set.filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+print(len(val_subset))
+print(len(train_subset))
 val_subset = val_subset.select(range(n_val))
-print("after preprocessing")
+train_subset = train_subset.select(range(n_train))
+
+
+# Create sentence embedding dict
+sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
+sent_emb_dict = {}
+print("Creating sentence embedding dict")
+for subset in [train_subset, val_subset]:
+    for dp, datapoint in enumerate(tqdm(subset)):
+        sentences = nltk.tokenize.sent_tokenize(datapoint["article"])
+        for s, sentence in enumerate(sentences):
+            sent_emb_dict[sentence] = torch.tensor(sbert_model.encode(sentence), device=param.device)
 
 # Evaluate the baseline
 rouge_scores = evaluate(
@@ -96,7 +113,7 @@ print("Average F1 for LEAD-3:", mean_F1)
 
 # Train and validate the RL summarizer
 summarizer = Summarizer(param)
-summarizer.train(train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every, baseline_rouge_score=mean_F1)
+summarizer.train(sent_emb_dict=sent_emb_dict, train_data=train_subset, val_data=val_subset, val_every=args.val_every, n_epochs=args.epochs, generate_every=args.generate_every, baseline_rouge_score=mean_F1)
 
 # Train and validate the translator summarizer
 # summarizer = Summarizer(param, wordvecs=wordvecs, word_int_dict=word_int_dict)
