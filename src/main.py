@@ -84,12 +84,13 @@ n_train = args.n_train
 n_val = n_train
 print(len(val_set))
 from copy import *
-print("n_sent= ", param.n_sent)
-val_subset = val_set.filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
+print("n_sent =", param.n_sent)
+n_sent = param.n_sent
+val_subset = val_set.filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= n_sent)
 # train_subset = train_set.select(range(200*n_train)).filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
 train_subset = train_set.filter(lambda example: len(nltk.tokenize.sent_tokenize(example["article"])) >= param.n_sent)
-print(len(val_subset))
-print(len(train_subset))
+print("len(val_subset):", len(val_subset))
+print("len(train_subset):", len(train_subset))
 val_subset = val_subset.select(range(n_val))
 train_subset = train_subset.select(range(n_train))
 

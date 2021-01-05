@@ -21,7 +21,7 @@ class SummarizerParameters:
     eps_max = 1 # 1, 1 means no greedy epsilon
     eps_min = 1
     sent_emb_dim = 768
-    n_sent = 80
+    n_sent = 40
     sentences_per_summary = 3
     use_combinations = False
     p = 10
@@ -62,6 +62,7 @@ class DocumentEncoder(nn.Module):
 
     def forward(self, sent_embs):
         _, (h_n, _) = self.lstm(sent_embs)
+        return h_n
         
 
 class SentenceExtractor(nn.Module):
@@ -79,8 +80,9 @@ class SentenceExtractor(nn.Module):
         batch_size, _ = sentences.shape
         sent_embs = self.sent_encoder(sentences)
         doc_encoding = self.doc_encoder(sent_embs)
+        c0 = torch.zeros(doc_encoding.shape, device=self.param.device)
 
-        h_t, _ = self.lstm(sent_embs, doc_encoding)
+        h_t, _ = self.lstm(sent_embs, (doc_encoding, c0))
         h_t = h_t.contiguous().view(batch_size, self.ll_size)
         
         out = self.ll(h_t)
@@ -139,8 +141,8 @@ class Summarizer:
 
     def train(self, sent_emb_dict, train_data, val_data=False, n_epochs=200, val_every=50, generate_every=50, batch_size=5, baseline_rouge_score=False):
         # Setting a fixed seed for reproducibility.
-        # torch.manual_seed(self.param.random_seed)
-        # random.seed(self.param.random_seed)
+        torch.manual_seed(self.param.random_seed)
+        random.seed(self.param.random_seed)
 
         sent_encoder = SentenceEncoder(self.param, sent_emb_dict)
         doc_encoder = DocumentEncoder(self.param)
