@@ -96,14 +96,14 @@ train_subset = train_subset.select(range(n_train))
 
 
 # Create sentence embedding dict
-sbert_model = SentenceTransformer('bert-base-nli-mean-tokens')
+sent_embedder = SentenceTransformer('bert-base-nli-mean-tokens')
 sent_emb_dict = {}
 print("Creating sentence embedding dict")
 for subset in [train_subset, val_subset]:
     for dp, datapoint in enumerate(tqdm(subset)):
         sentences = nltk.tokenize.sent_tokenize(datapoint["article"])
         for s, sentence in enumerate(sentences):
-            sent_emb_dict[sentence] = torch.tensor(sbert_model.encode(sentence), device=param.device)
+            sent_emb_dict[sentence] = torch.tensor(sent_embedder.encode(sentence), device=param.device)
 
 # Evaluate the baseline
 rouge_scores = evaluate(

@@ -13,12 +13,15 @@ import random
 import matplotlib.pyplot as plt
 from common_utils import *
 
+from config import FlagsClass
+FLAGS = FlagsClass()
+
 
 class SummarizerParameters:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     random_seed = 0
     
-    eps_max = 1 # 1, 1 means no greedy epsilon
+    eps_max = 1  # 1, 1 means no greedy epsilon
     eps_min = 1
     sent_emb_dim = 768
     n_sent = 40
@@ -27,7 +30,7 @@ class SummarizerParameters:
     p = 10
     k = 5
 
-    batch_size = 2
+    batch_size = 20
     learning_rate = 1e-3
 
     
@@ -54,6 +57,67 @@ class SentenceEncoder(nn.Module):
                 sentence_embeddings[dp, s] = self.sent_emb_dict[sentence]
         return sentence_embeddings
 
+# class WordEmbedding(nn.Module):
+#     def __init__(self, word_embedding_array):
+#         super(WordEmbedding, self).__init__()
+        
+#         word_embed_size = word_embedding_array.shape[1]
+#         weight_pad = Parameter(t.from_numpy(np.zeros((1, word_embed_size))).float(), requires_grad=False)
+#         weight_unk = Parameter(t.from_numpy(np.zeros((1, word_embed_size))).float(), requires_grad=True)
+#         weight_vocab = Parameter(t.from_numpy(word_embedding_array).float(), requires_grad=False)
+
+#         weight_all = t.cat([weight_pad, weight_unk, weight_vocab], 0)
+
+#         """
+#         With the current implementation, vocab as well as unk both have requires_grad=True.
+#         This is not the behavior in the paper where only unk has requires_grad=True.
+#         In pytorch, cannot find a way to have some index to have
+#         requires_grad=True and others requires_grad=False (except for padding_index).
+#         """
+#         self.all_embeddings = nn.Embedding(weight_all.shape[0], word_embed_size, padding_idx=0)
+#         self.all_embeddings.weight = Parameter(weight_all)  # Overrides the requires_grad set in Parameters above
+
+#     def forward(self, word_input):
+#         """
+#         :param word_input: [batch_size, seq_len] tensor of Long type
+#         :return: input embedding with shape of [batch_size, seq_len, word_embed_size]
+#         """
+#         return self.all_embeddings(word_input)
+
+
+# class SentenceEncoder(nn.Module):
+#     def __init__(self):
+#         super(SentenceEncoder, self).__init__()
+#         self.out_channels = FLAGS.out_channels
+#         self.in_channels = FLAGS.wordembed_size
+#         self.sentembedding_size = FLAGS.sentembedding_size
+#         self.kernel_widths = FLAGS.kernel_widths
+
+#         if self.sentembedding_size != (self.out_channels * len(self.kernel_widths)):
+#             raise ValueError("sent embed != out_chan * kW")
+
+#         self.kernels = [Parameter(t.Tensor(self.out_channels,
+#                                            self.in_channels,
+#                                            kW).normal_(0, 0.05)) for kW in self.kernel_widths]
+#         self._add_to_parameters(self.kernels, 'SentenceEncoderKernel')
+#         self.bias = Parameter(t.Tensor(self.out_channels).normal_(0, 0.05))
+
+#         self.lrn = nn.LocalResponseNorm(self.out_channels)
+
+#     def forward(self, sentences):
+#         """
+#         :param sentences: batch_size (each being a different sentence), each_sent_length, wordembed_size
+#         :return: batch_size, sentembedding_size
+#         """
+#         # tokenize sentences into words and pad
+#         sentences = sentences.transpose(1, 2).contiguous()  # in_channel (i.e. word embed) has to be at 1
+#         xs = [F.relu(F.conv1d(sentences, kernel, bias=self.bias)) for kernel in self.kernels]  # [(batch_size, out_channels, k-h+1)] * len(self.kernels)
+#         xs = [F.max_pool1d(x, x.shape[2]) for x in xs]  # [(batch_size, out_channels, 1)] * len(self.kernels)
+#         xs = [self.lrn(x) for x in xs]  # [(batch_size, out_channels, 1)] * len(self.kernels)
+#         xs = [x.squeeze(2) for x in xs]  # [(batch_size, out_channels)] * len(self.kernels)
+#         xs = t.cat(xs, 1)  # batch_size, out_channels * len(self.kernels) == batch_size, sentembedding_size
+#         return xs
+
 class DocumentEncoder(nn.Module):
     def __init__(self, param):
             super().__init__()
@@ -76,9 +140,12 @@ class SentenceExtractor(nn.Module):
         self.ll = nn.Linear(self.ll_size, param.n_sent)
 
     def forward(self, sentences):
-        # TODO: Feed sentences in reverse order
         batch_size, _ = sentences.shape
+        # word tokenize sentences and pad so that every sentence has the same number of words AND create word embeddings
         sent_embs = self.sent_encoder(sentences)
+        sent_embs = sent_embs.flip(1)
+        
+        # Initial hidden state and cell state
         doc_encoding = self.doc_encoder(sent_embs)
         c0 = torch.zeros(doc_encoding.shape, device=self.param.device)
 
@@ -235,7 +302,7 @@ class Summarizer:
 
         if use_combinations:
             # Calculate scores for combinations of p sentences, sample one and calculate reward
-            best_p_sentences_idx = torch.topk(outputs, k=self.param.p).indices
+            best_p_sentences_idx = torch.topk(torch.exp(outputs), k=self.param.p).indices
             n_combinations = int(comb(self.param.p, self.param.sentences_per_summary))
             scores = torch.zeros((n_datapoints, n_combinations), device=self.param.device)
             for dp, datapoint in enumerate(sentences):
@@ -268,7 +335,7 @@ class Summarizer:
                 
         else:
             for dp, datapoint in enumerate(sentences):
-                chosen_sents_idx[dp] = torch.topk(outputs[dp], k=self.param.sentences_per_summary).indices
+                chosen_sents_idx[dp] = torch.topk(torch.exp(outputs)[dp], k=self.param.sentences_per_summary).indices
                 try:
                     chosen_summaries[dp] = ""
                     for sentence_idx in chosen_sents_idx[dp]:
