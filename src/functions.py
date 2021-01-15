@@ -18,6 +18,7 @@ def rouge_score(text, highlights):
             highlights
         )
 
+        #print(scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2])
         rouge_mean = np.mean(
             [scores["rouge1"][2], scores["rouge2"][2], scores["rougeL"][2]]
         )
